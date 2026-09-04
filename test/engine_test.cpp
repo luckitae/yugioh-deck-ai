@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
-#include "../../ygopro-core.git/ocgapi.h"
+#include "ocgapi.h"
 
 static void card_reader(void* payload, uint32_t code, OCG_CardData* data) { (void)payload; (void)code; (void)data; }
 static int script_reader(void* payload, OCG_Duel duel, const char* name) { (void)payload; (void)duel; (void)name; return 0; }
