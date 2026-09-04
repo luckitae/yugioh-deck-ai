@@ -2,7 +2,25 @@
 #include <stdint.h>
 #include "ocgapi.h"
 
-static void card_reader(void* payload, uint32_t code, OCG_CardData* data) { (void)payload; (void)code; (void)data; }
+static void card_reader(void* payload, uint32_t code, OCG_CardData* data) {
+    (void)payload;
+
+    if (code != 1)
+        return;
+
+    data->code = 1;
+    data->alias = 0;
+    data->setcodes = nullptr;
+    data->type = 0;
+    data->level = 4;
+    data->attribute = 0;
+    data->race = 0;
+    data->attack = 1000;
+    data->defense = 1000;
+    data->lscale = 0;
+    data->rscale = 0;
+    data->link_marker = 0;
+}
 static int script_reader(void* payload, OCG_Duel duel, const char* name) { (void)payload; (void)duel; (void)name; return 0; }
 static void log_handler(void* payload, const char* string, int type) { (void)payload; (void)string; (void)type; }
 static void card_reader_done(void* payload, OCG_CardData* data) { (void)payload; (void)data; }
@@ -32,6 +50,19 @@ int main() {
     int result = OCG_CreateDuel(&duel, &options);
     printf("OCG_CreateDuel result: %d\n", result);
     printf("Duel handle: %p\n", duel);
+    if (duel != nullptr) {
+        OCG_NewCardInfo card = {};
+        card.team = 0;
+        card.duelist = 0;
+        card.code = 1;
+        card.con = 0;
+        card.loc = 0x01;
+        card.seq = 0;
+        card.pos = 0;
+
+        OCG_DuelNewCard(duel, &card);
+   	printf("Test card added successfully.\n");
+   }
 
     if (duel != nullptr) {
         OCG_DestroyDuel(duel);
