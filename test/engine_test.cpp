@@ -39,6 +39,44 @@ static void card_reader_done(void* payload, OCG_CardData* data) {
     (void)payload;
     (void)data;
 }
+static void dump_messages(const void* buffer, uint32_t length) {
+    const unsigned char* data =
+        (const unsigned char*)buffer;
+
+    printf("=== Message stream (%u bytes) ===\n", length);
+
+    if (length < 4) {
+        printf("Message stream too short.\n");
+        return;
+    }
+
+    uint32_t pos = 0;
+
+    while (pos + 4 <= length) {
+        uint32_t type =
+            (uint32_t)data[pos]
+            | ((uint32_t)data[pos + 1] << 8)
+            | ((uint32_t)data[pos + 2] << 16)
+            | ((uint32_t)data[pos + 3] << 24);
+
+        printf("Message at offset %u: type=%u (0x%02X)\n",
+               pos, type, data[pos]);
+
+        pos += 4;
+
+        /*
+         * 아직 메시지별 길이를 정의하지 않는다.
+         * 우선 첫 메시지 타입과 전체 버퍼를 확인한다.
+         */
+        break;
+    }
+
+    printf("Raw bytes:");
+    for (uint32_t i = 0; i < length; ++i)
+        printf(" %02X", data[i]);
+
+    printf("\n");
+}
 
 int main() {
     int major = 0;
@@ -115,13 +153,7 @@ int main() {
 
                 unsigned char* bytes = (unsigned char*)message;
 
-                printf("Message bytes:");
-
-                for (uint32_t j = 0; j < length; ++j)
-
-                printf(" %02X", bytes[j]);
-
-                printf("\n");
+                dump_messages(message, length);
 
             }  
 
