@@ -10,16 +10,31 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y clang ninja-build git python3-pip && python3 -m pip install meson
+
       - name: Clone ygopro-core
         run: git clone https://github.com/edo9300/ygopro-core.git
+
       - name: Initialize Lua
         working-directory: ygopro-core
         run: git submodule update --init --recursive
+
+      - name: Add engine test
+        run: cp test/engine_test.cpp ygopro-core/engine_test.cpp
+
+      - name: Add test executable
+        run: printf '\nexecutable("engine_test", "engine_test.cpp", dependencies : ocgcore_dep)\n' >> ygopro-core/meson.build
+
       - name: Configure
         working-directory: ygopro-core
         run: meson setup build
+
       - name: Build
         working-directory: ygopro-core
         run: meson compile -C build
+
+      - name: Run engine test
+        working-directory: ygopro-core
+        run: ./build/engine_test
