@@ -111,6 +111,19 @@ int main() {
 
             printf("Message length: %u\n", length);
             printf("Message pointer: %p\n", message);
+	    if (message != nullptr && length > 0) {
+
+                unsigned char* bytes = (unsigned char*)message;
+
+                printf("Message bytes:");
+
+                for (uint32_t j = 0; j < length; ++j)
+
+                printf(" %02X", bytes[j]);
+
+                printf("\n");
+
+            }  
 
             if (message == nullptr || length == 0) {
                 printf("ERROR: Awaiting state without a message.\n");
