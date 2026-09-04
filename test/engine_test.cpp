@@ -62,8 +62,9 @@ int main() {
 
         OCG_DuelNewCard(duel, &card);
    	printf("Test card added successfully.\n");
-   }
-
+    }
+    OCG_StartDuel(duel);
+    printf("Duel started successfully.\n");
     if (duel != nullptr) {
         OCG_DestroyDuel(duel);
         printf("Duel destroyed successfully.\n");
