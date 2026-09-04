@@ -21,53 +21,111 @@ static void card_reader(void* payload, uint32_t code, OCG_CardData* data) {
     data->rscale = 0;
     data->link_marker = 0;
 }
-static int script_reader(void* payload, OCG_Duel duel, const char* name) { (void)payload; (void)duel; (void)name; return 0; }
-static void log_handler(void* payload, const char* string, int type) { (void)payload; (void)string; (void)type; }
-static void card_reader_done(void* payload, OCG_CardData* data) { (void)payload; (void)data; }
+
+static int script_reader(void* payload, OCG_Duel duel, const char* name) {
+    (void)payload;
+    (void)duel;
+    (void)name;
+    return 0;
+}
+
+static void log_handler(void* payload, const char* string, int type) {
+    (void)payload;
+    (void)string;
+    (void)type;
+}
+
+static void card_reader_done(void* payload, OCG_CardData* data) {
+    (void)payload;
+    (void)data;
+}
 
 int main() {
-    int major = 0, minor = 0;
+    int major = 0;
+    int minor = 0;
+
     OCG_GetVersion(&major, &minor);
     printf("OCGCore version: %d.%d\n", major, minor);
 
     OCG_DuelOptions options = {};
+
     options.seed[0] = 1;
     options.seed[1] = 2;
     options.seed[2] = 3;
     options.seed[3] = 4;
+
     options.team1.startingLP = 8000;
     options.team1.startingDrawCount = 5;
     options.team1.drawCountPerTurn = 1;
+
     options.team2.startingLP = 8000;
     options.team2.startingDrawCount = 5;
     options.team2.drawCountPerTurn = 1;
+
     options.cardReader = card_reader;
     options.scriptReader = script_reader;
     options.logHandler = log_handler;
     options.cardReaderDone = card_reader_done;
 
     OCG_Duel duel = nullptr;
+
     int result = OCG_CreateDuel(&duel, &options);
+
     printf("OCG_CreateDuel result: %d\n", result);
     printf("Duel handle: %p\n", duel);
-    if (duel != nullptr) {
-        OCG_NewCardInfo card = {};
-        card.team = 0;
-        card.duelist = 0;
-        card.code = 1;
-        card.con = 0;
-        card.loc = 0x01;
-        card.seq = 0;
-        card.pos = 0;
 
-        OCG_DuelNewCard(duel, &card);
-   	printf("Test card added successfully.\n");
+    if (duel == nullptr) {
+        printf("ERROR: Duel was not created.\n");
+        return 1;
     }
+
+    OCG_NewCardInfo card = {};
+
+    card.team = 0;
+    card.duelist = 0;
+    card.code = 1;
+    card.con = 0;
+    card.loc = 0x01;
+    card.seq = 0;
+    card.pos = 0;
+
+    OCG_DuelNewCard(duel, &card);
+    printf("Test card added successfully.\n");
+
     OCG_StartDuel(duel);
     printf("Duel started successfully.\n");
-    if (duel != nullptr) {
-        OCG_DestroyDuel(duel);
-        printf("Duel destroyed successfully.\n");
+
+    for (int i = 0; i < 100; ++i) {
+        int status = OCG_DuelProcess(duel);
+
+        printf("DuelProcess[%d] status: %d\n", i, status);
+
+        if (status == OCG_DUEL_STATUS_END) {
+            printf("Duel ended.\n");
+            break;
+        }
+
+        if (status == OCG_DUEL_STATUS_AWAITING) {
+            uint32_t length = 0;
+            void* message = OCG_DuelGetMessage(duel, &length);
+
+            printf("Message length: %u\n", length);
+            printf("Message pointer: %p\n", message);
+
+            if (message == nullptr || length == 0) {
+                printf("ERROR: Awaiting state without a message.\n");
+                OCG_DestroyDuel(duel);
+                return 1;
+            }
+
+            printf("Engine is awaiting a response.\n");
+
+            break;
+        }
     }
+
+    OCG_DestroyDuel(duel);
+    printf("Duel destroyed successfully.\n");
+
     return 0;
 }
