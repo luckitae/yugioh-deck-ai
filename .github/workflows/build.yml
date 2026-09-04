@@ -25,7 +25,8 @@ jobs:
         run: cp test/engine_test.cpp ygopro-core/engine_test.cpp
 
       - name: Add test executable
-        run: echo "executable('engine_test', 'engine_test.cpp', dependencies : ocgcore_dep)" >> ygopro-core/meson.build
+        run: |
+          echo "executable('engine_test', 'engine_test.cpp', dependencies : ocgcore_dep)" >> ygopro-core/meson.build
 
       - name: Configure
         working-directory: ygopro-core
