@@ -10,7 +10,7 @@ static void card_reader_done(void* payload, OCG_CardData* data) { (void)payload;
 int main() {
     int major = 0, minor = 0;
     OCG_GetVersion(&major, &minor);
-    printf("OCGCore version: %d.%d\\n", major, minor);
+    printf("OCGCore version: %d.%d\n", major, minor);
 
     OCG_DuelOptions options = {};
     options.seed[0] = 1;
@@ -30,12 +30,12 @@ int main() {
 
     OCG_Duel duel = nullptr;
     int result = OCG_CreateDuel(&duel, &options);
-    printf("OCG_CreateDuel result: %d\\n", result);
-    printf("Duel handle: %p\\n", duel);
+    printf("OCG_CreateDuel result: %d\n", result);
+    printf("Duel handle: %p\n", duel);
 
     if (duel != nullptr) {
         OCG_DestroyDuel(duel);
-        printf("Duel destroyed successfully.\\n");
+        printf("Duel destroyed successfully.\n");
     }
     return 0;
 }
