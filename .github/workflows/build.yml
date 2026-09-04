@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang meson ninja-build git
+        run: sudo apt-get update && sudo apt-get install -y clang ninja-build git python3-pip && python3 -m pip install meson
       - name: Clone ygopro-core
         run: git clone https://github.com/edo9300/ygopro-core.git
       - name: Initialize Lua
