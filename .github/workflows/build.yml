@@ -31,3 +31,11 @@ jobs:
         working-directory: ygopro-core
         run: |
           meson compile -C build
+
+      - name: Build engine test
+        run: |
+          clang++ -std=c++17 -Wall -Wextra -pedantic -Iygopro-core test/engine_test.cpp test/message_decoder.cpp -Lygopro-core/build -locgcore -Wl,-rpath,$GITHUB_WORKSPACE/ygopro-core/build -o engine_test
+
+      - name: Run engine test
+        run: |
+          ./engine_test
