@@ -48,6 +48,12 @@ static void dump_messages(const void* buffer, uint32_t length) {
         }
         printf("message[%d]: type=%u (0x%02X) %s payload=%u bytes\n",
                count, msg.type, msg.type, message_name(msg.type), msg.payload_size);
+        if(msg.type == MSG_SELECT_IDLECMD) {
+            printf("  payload:");
+            for(uint32_t j = 0; j < msg.payload_size; ++j)
+                printf(" %02X", msg.payload[j]);
+            printf("\n");
+        }
         ++count;
     }
     printf("Decoded %d message frame(s).\n", count);
