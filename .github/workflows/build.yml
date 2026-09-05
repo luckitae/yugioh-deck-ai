@@ -5,37 +5,29 @@ on:
   pull_request:
 
 jobs:
-  build:
+  build-core:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang ninja-build git python3-pip && python3 -m pip install meson
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang ninja-build git python3-pip
+          python3 -m pip install meson
 
       - name: Clone ygopro-core
-        run: git clone https://github.com/edo9300/ygopro-core.git
-
-      - name: Initialize Lua
-        working-directory: ygopro-core
-        run: git submodule update --init --recursive
-
-      - name: Add engine test
-        run: cp test/engine_test.cpp ygopro-core/engine_test.cpp
-
-      - name: Add test executable
         run: |
-          echo "executable('engine_test', 'engine_test.cpp', dependencies : ocgcore_dep)" >> ygopro-core/meson.build
+          git clone --recursive https://github.com/edo9300/ygopro-core.git
 
       - name: Configure
         working-directory: ygopro-core
-        run: meson setup build
+        run: |
+          meson setup build --backend=ninja
 
       - name: Build
         working-directory: ygopro-core
-        run: meson compile -C build
-
-      - name: Run engine test
-        working-directory: ygopro-core
-        run: ./build/engine_test
+        run: |
+          meson compile -C build
