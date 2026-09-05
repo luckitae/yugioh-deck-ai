@@ -1,5 +1,5 @@
 #include "message_decoder.h"
-#include "../ocgapi_constants.h"
+#include "ocgapi_constants.h"
 
 static uint32_t read_u32_le(const uint8_t* p) {
     return ((uint32_t)p[0]) |
