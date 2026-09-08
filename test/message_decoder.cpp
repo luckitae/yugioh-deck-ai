@@ -92,22 +92,232 @@ const char* message_name(uint32_t type) {
     }
 }
 
-int decode_next_message(const uint8_t* buffer, uint32_t length,
-                        uint32_t* offset, DecodedMessage* out) {
-    if(!buffer || !offset || !out || *offset > length)
+int decode_next_message(const uint8_t* buffer,
+                        uint32_t length,
+                        uint32_t* offset,
+                        DecodedMessage* out) {
+    if(!buffer || !offset || !out)
         return 0;
+
+    if(*offset > length)
+        return 0;
+
     if(length - *offset < 4)
         return 0;
 
     const uint8_t* frame = buffer + *offset;
+
     uint32_t size = read_u32_le(frame);
-    if(size == 0 || size > length - *offset - 4)
+
+    /*
+     * A frame must contain at least the message type byte.
+     */
+    if(size == 0)
+        return 0;
+
+    if(size > length - *offset - 4)
         return 0;
 
     const uint8_t* payload = frame + 4;
+
     out->type = payload[0];
     out->payload = payload;
     out->payload_size = size;
+
     *offset += 4 + size;
+
     return 1;
+}
+
+/*
+ * Skip count entries of fixed size.
+ *
+ * This does not decode the entries. It only validates that the
+ * complete array exists inside the message.
+ */
+static int skip_entries(const uint8_t* data,
+                        uint32_t size,
+                        uint32_t* offset,
+                        uint32_t count,
+                        uint32_t entry_size) {
+    if(!data || !offset)
+        return 0;
+
+    if(*offset > size)
+        return 0;
+
+    if(entry_size == 0)
+        return 0;
+
+    if(count > (size - *offset) / entry_size)
+        return 0;
+
+    *offset += count * entry_size;
+
+    return 1;
+}
+
+/*
+ * MSG_SELECT_IDLECMD layout from playerop.cpp:
+ *
+ *   uint8_t  playerid
+ *
+ *   uint32_t summonable_count
+ *   summonable_count * 10 bytes
+ *
+ *   uint32_t spsummonable_count
+ *   spsummonable_count * 10 bytes
+ *
+ *   uint32_t repositionable_count
+ *   repositionable_count * 7 bytes
+ *
+ *   uint32_t msetable_count
+ *   msetable_count * 10 bytes
+ *
+ *   uint32_t ssetable_count
+ *   ssetable_count * 10 bytes
+ *
+ *   uint32_t activate_count
+ *   activate_count * 19 bytes
+ *
+ *   uint8_t to_bp
+ *   uint8_t to_ep
+ *   uint8_t can_shuffle
+ *
+ * Normal card entry:
+ *
+ *   uint32_t code
+ *   uint8_t  controller
+ *   uint8_t  location
+ *   uint32_t sequence
+ *
+ * = 10 bytes
+ *
+ * Reposition entry:
+ *
+ *   uint32_t code
+ *   uint8_t  controller
+ *   uint8_t  location
+ *   uint8_t  sequence
+ *
+ * = 7 bytes
+ *
+ * Activate entry:
+ *
+ *   uint32_t code
+ *   uint8_t  controller
+ *   uint8_t  location
+ *   uint32_t sequence
+ *   uint64_t description
+ *   uint8_t  client_mode
+ *
+ * = 19 bytes
+ */
+int decode_idle_cmd(const DecodedMessage* msg,
+                    IdleCmdMessage* out) {
+    if(!msg || !out)
+        return 0;
+
+    if(msg->type != MSG_SELECT_IDLECMD)
+        return 0;
+
+    if(!msg->payload || msg->payload_size < 1)
+        return 0;
+
+    const uint8_t* data = msg->payload;
+    const uint32_t size = msg->payload_size;
+
+    uint32_t offset = 0;
+
+    out->player = data[offset++];
+
+    /*
+     * summonable
+     */
+    if(size - offset < 4)
+        return 0;
+
+    out->summonable_count = read_u32_le(data + offset);
+    offset += 4;
+
+    if(!skip_entries(data, size, &offset,
+                     out->summonable_count, 10))
+        return 0;
+
+    /*
+     * special summon
+     */
+    if(size - offset < 4)
+        return 0;
+
+    out->spsummonable_count = read_u32_le(data + offset);
+    offset += 4;
+
+    if(!skip_entries(data, size, &offset,
+                     out->spsummonable_count, 10))
+        return 0;
+
+    /*
+     * reposition
+     */
+    if(size - offset < 4)
+        return 0;
+
+    out->repositionable_count = read_u32_le(data + offset);
+    offset += 4;
+
+    if(!skip_entries(data, size, &offset,
+                     out->repositionable_count, 7))
+        return 0;
+
+    /*
+     * monster set
+     */
+    if(size - offset < 4)
+        return 0;
+
+    out->msetable_count = read_u32_le(data + offset);
+    offset += 4;
+
+    if(!skip_entries(data, size, &offset,
+                     out->msetable_count, 10))
+        return 0;
+
+    /*
+     * spell/trap set
+     */
+    if(size - offset < 4)
+        return 0;
+
+    out->ssetable_count = read_u32_le(data + offset);
+    offset += 4;
+
+    if(!skip_entries(data, size, &offset,
+                     out->ssetable_count, 10))
+        return 0;
+
+    /*
+     * activate
+     */
+    if(size - offset < 4)
+        return 0;
+
+    out->activate_count = read_u32_le(data + offset);
+    offset += 4;
+
+    if(!skip_entries(data, size, &offset,
+                     out->activate_count, 19))
+        return 0;
+
+    /*
+     * Final flags.
+     */
+    if(size - offset != 3)
+        return 0;
+
+    out->to_bp = data[offset++];
+    out->to_ep = data[offset++];
+    out->can_shuffle = data[offset++];
+
+    return offset == size;
 }
