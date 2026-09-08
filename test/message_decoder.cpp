@@ -221,13 +221,17 @@ int decode_idle_cmd(const DecodedMessage* msg,
     if(msg->type != MSG_SELECT_IDLECMD)
         return 0;
 
-    if(!msg->payload || msg->payload_size < 1)
+    if(!msg->payload || msg->payload_size < 2)
         return 0;
 
     const uint8_t* data = msg->payload;
     const uint32_t size = msg->payload_size;
 
-    uint32_t offset = 0;
+    /*
+     * payload[0] is the MSG_* type already decoded by
+     * decode_next_message().
+     */
+    uint32_t offset = 1;
 
     out->player = data[offset++];
 
