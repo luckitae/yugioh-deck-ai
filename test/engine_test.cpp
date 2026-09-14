@@ -141,7 +141,7 @@ static uint32_t dump_messages(const void* buffer,
             printf("=== Decoded chain selection ===\n");
             printf("forced:              %u\n", chain_forced);
             printf("selectable chains:   %u\n", chain_count);
-         else if(msg.type == MSG_SELECT_CARD) {
+        } else if(msg.type == MSG_SELECT_CARD) {
             /*
              * payload[0]      = MSG_SELECT_CARD
              * payload[1]      = player
