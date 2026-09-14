@@ -28,6 +28,7 @@ public:
     CardDatabase(CardDatabase&&) = delete;
     CardDatabase& operator=(CardDatabase&&) = delete;
     const CardRecord* find(uint32_t code) const noexcept;
+    const std::map<uint32_t, CardRecord>& records() const noexcept { return cards_; }
     size_t size() const noexcept { return cards_.size(); }
 private:
     std::map<uint32_t, CardRecord> cards_;

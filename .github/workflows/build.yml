@@ -82,6 +82,26 @@ jobs:
           set -o pipefail
           python3 tools/run_phase2_tests.py 2>&1 | tee artifacts/phase2_console.log
 
+      - name: Build Phase 3 unit tests
+        run: |
+          set -o pipefail
+          clang++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iygopro-core -Isrc test/phase3_unit.cpp src/data/card_database.cpp src/analysis/card_analyzer.cpp src/analysis/card_graph.cpp -lsqlite3 -o phase3_unit 2>&1 | tee artifacts/phase3_unit_build.log
+
+      - name: Run Phase 3 unit tests
+        run: |
+          set -o pipefail
+          ./phase3_unit 2>&1 | tee artifacts/phase3_unit.log
+
+      - name: Build Phase 3 analyzer
+        run: |
+          set -o pipefail
+          clang++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iygopro-core -Isrc tools/phase3_analyze.cpp src/data/card_database.cpp src/analysis/card_analyzer.cpp src/analysis/card_graph.cpp -lsqlite3 -o phase3_analyze 2>&1 | tee artifacts/phase3_analyze_build.log
+
+      - name: Run Phase 3 real-data tests
+        run: |
+          set -o pipefail
+          python3 tools/run_phase3_tests.py 2>&1 | tee artifacts/phase3_console.log
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -92,5 +112,17 @@ jobs:
             artifacts/*.log
             artifacts/*.json
             artifacts/decks/*.ydk
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Phase 3 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-test-results
+          path: |
+            artifacts/phase3_*.txt
+            artifacts/phase3_*.log
+            artifacts/phase3_*.json
           if-no-files-found: warn
           retention-days: 14
