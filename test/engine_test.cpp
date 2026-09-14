@@ -80,6 +80,10 @@ static uint32_t select_card_min = 0;
 static uint32_t select_card_max = 0;
 static uint32_t select_card_count = 0;
 
+static bool duel_has_winner = false;
+static uint8_t duel_winner = 0;
+static uint8_t duel_win_reason = 0;
+
 static uint32_t read_u32_le_local(const uint8_t* p) {
     return (uint32_t)p[0]
          | ((uint32_t)p[1] << 8)
@@ -116,7 +120,26 @@ static uint32_t dump_messages(const void* buffer,
             msg.payload_size
         );
 
-        if(msg.type == MSG_SELECT_IDLECMD) {
+        if(msg.type == MSG_WIN) {
+            /*
+             * MSG_WIN payload:
+             *   payload[0] = MSG_WIN
+             *   payload[1] = winner
+             *   payload[2] = reason
+             */
+            if(msg.payload_size < 3) {
+                printf("ERROR: malformed MSG_WIN.\n");
+                return 0;
+            }
+
+            duel_winner = msg.payload[1];
+            duel_win_reason = msg.payload[2];
+            duel_has_winner = true;
+
+            printf("=== Duel result ===\n");
+            printf("winner:              %u\n", duel_winner);
+            printf("reason:              %u\n", duel_win_reason);
+        } else if(msg.type == MSG_SELECT_IDLECMD) {
             print_idle_command(&msg);
             awaiting_message = msg.type;
         } else if(msg.type == MSG_SELECT_CHAIN) {
@@ -261,6 +284,7 @@ int main() {
     printf("Duel started.\n");
 
     uint32_t awaiting_message = 0;
+    bool duel_finished = false;
 
     for(int i = 0; i < 10000; ++i) {
         int status = OCG_DuelProcess(duel);
@@ -277,8 +301,19 @@ int main() {
         if(message && length)
             awaiting_message = dump_messages(message, length);
 
+        if(duel_has_winner) {
+            printf(
+                "Duel finished by MSG_WIN: winner=%u reason=%u.\n",
+                duel_winner,
+                duel_win_reason
+            );
+            duel_finished = true;
+            break;
+        }
+
         if(status == OCG_DUEL_STATUS_END) {
             printf("Duel ended.\n");
+            duel_finished = true;
             break;
         }
 
@@ -376,6 +411,11 @@ int main() {
     OCG_DestroyDuel(duel);
 
     printf("Duel destroyed successfully.\n");
+
+    if(!duel_finished) {
+        printf("ERROR: duel did not reach a valid end condition.\n");
+        return 1;
+    }
 
     return 0;
 }
