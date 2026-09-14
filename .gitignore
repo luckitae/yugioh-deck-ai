@@ -7,3 +7,14 @@ a.out
 .DS_Store
 payload_size
 player
+
+# Phase 2: generated/downloaded data and test outputs
+payload_size;
+/ygopro-core/
+/data/vendor/
+/artifacts/
+/phase2_smoke
+/phase2_unit
+/phase2_update*.zip
+__pycache__/
+*.pyc

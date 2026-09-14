@@ -3,20 +3,32 @@ name: Build
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-core:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: |
+          mkdir -p artifacts
           sudo apt-get update
-          sudo apt-get install -y clang ninja-build git python3-pip
-          python3 -m pip install meson
+          sudo apt-get install -y clang ninja-build git libsqlite3-dev
+          python3 -m pip install meson==1.9.1
+          { clang++ --version; python3 --version; meson --version; ninja --version; dpkg-query -W libsqlite3-dev; } > artifacts/toolchain.txt
 
       - name: Clone pinned ygopro-core
         run: |
@@ -27,18 +39,58 @@ jobs:
 
       - name: Configure
         working-directory: ygopro-core
-        run: |
-          meson setup build --backend=ninja
+        run: meson setup build --backend=ninja
 
       - name: Build
         working-directory: ygopro-core
-        run: |
-          meson compile -C build
+        run: meson compile -C build
 
+      # Phase 1 기준 소스 세 파일은 수정하지 않는다.
       - name: Build engine test
         run: |
           clang++ -std=c++17 -Wall -Wextra -pedantic -Iygopro-core test/engine_test.cpp test/message_decoder.cpp -Lygopro-core/build -locgcore -Wl,-rpath,$GITHUB_WORKSPACE/ygopro-core/build -o engine_test
 
       - name: Run engine test
         run: |
-          ./engine_test
+          set -o pipefail
+          timeout 120 ./engine_test 2>&1 | tee artifacts/phase1.log
+          grep -q 'Duel finished by MSG_WIN' artifacts/phase1.log
+
+      # 모의 OCG_LoadScript가 들어 있는 unit 바이너리는 실제 코어에 링크하지 않는다.
+      - name: Build Phase 2 unit tests
+        run: |
+          set -o pipefail
+          clang++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iygopro-core -Isrc -Itest test/phase2_unit.cpp src/data/card_database.cpp src/data/deck_loader.cpp src/data/script_loader.cpp src/protocol/smoke_response.cpp test/message_decoder.cpp -lsqlite3 -o phase2_unit 2>&1 | tee artifacts/phase2_unit_build.log
+
+      - name: Run Phase 2 unit tests
+        run: |
+          set -o pipefail
+          ./phase2_unit 2>&1 | tee artifacts/phase2_unit.log
+
+      - name: Fetch pinned Phase 2 data
+        run: |
+          set -o pipefail
+          python3 tools/fetch_phase2_data.py 2>&1 | tee artifacts/data_fetch.log
+
+      - name: Build Phase 2 real-data test
+        run: |
+          set -o pipefail
+          clang++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iygopro-core -Isrc -Itest test/phase2_smoke.cpp src/data/card_database.cpp src/data/deck_loader.cpp src/data/script_loader.cpp src/protocol/smoke_response.cpp test/message_decoder.cpp -lsqlite3 -Lygopro-core/build -locgcore -Wl,-rpath,$GITHUB_WORKSPACE/ygopro-core/build -o phase2_smoke 2>&1 | tee artifacts/phase2_smoke_build.log
+
+      - name: Run Phase 2 real-data tests
+        run: |
+          set -o pipefail
+          python3 tools/run_phase2_tests.py 2>&1 | tee artifacts/phase2_console.log
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-test-results
+          path: |
+            artifacts/*.txt
+            artifacts/*.log
+            artifacts/*.json
+            artifacts/decks/*.ydk
+          if-no-files-found: warn
+          retention-days: 14

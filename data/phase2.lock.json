@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "profile": "mr5-no-banlist-smoke-v1",
+  "snapshot_note": "Dependency snapshot aligned with the supplied core on 2026-09-03; not a latest-version claim.",
+  "engine_api": "11.0",
+  "core": {
+    "url": "https://github.com/edo9300/ygopro-core.git",
+    "commit": "b8c05dff14da0b13608950a73906287dc0b601f9"
+  },
+  "database": {
+    "url": "https://github.com/ProjectIgnis/BabelCDB.git",
+    "commit": "3db9b2e5b048e1bf7ae6f1af39f2d185d91c07c5",
+    "file": "cards.cdb"
+  },
+  "scripts": {
+    "url": "https://github.com/ProjectIgnis/CardScripts.git",
+    "commit": "c4faac1c5d75929f6f54751117952c074bddf7e8"
+  },
+  "deck_rules": {
+    "main_min": 40,
+    "main_max": 60,
+    "extra_max": 15,
+    "side_max": 15,
+    "copies_main_extra_side_combined": 3,
+    "scope_mask": 3,
+    "banlist": null,
+    "tournament_legality_verified": false
+  }
+}
