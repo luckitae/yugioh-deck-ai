@@ -70,6 +70,16 @@ static void print_idle_command(const DecodedMessage* msg) {
     printf("can shuffle:         %u\n", idle.can_shuffle);
 }
 
+static uint8_t chain_forced = 0;
+static uint32_t chain_count = 0;
+
+static uint32_t read_u32_le_local(const uint8_t* p) {
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
 static uint32_t dump_messages(const void* buffer,
                               uint32_t length) {
     const uint8_t* data = (const uint8_t*)buffer;
@@ -102,6 +112,28 @@ static uint32_t dump_messages(const void* buffer,
         if(msg.type == MSG_SELECT_IDLECMD) {
             print_idle_command(&msg);
             awaiting_message = msg.type;
+        } else if(msg.type == MSG_SELECT_CHAIN) {
+            /*
+             * payload[0] = MSG_SELECT_CHAIN
+             * payload[1] = player
+             * payload[2] = spe_count
+             * payload[3] = forced
+             * payload[4..7] = hint timing (player)
+             * payload[8..11] = hint timing (opponent)
+             * payload[12..15] = selectable chain count
+             */
+            if(msg.payload_size < 16) {
+                printf("ERROR: malformed MSG_SELECT_CHAIN.\n");
+                return 0;
+            }
+
+            chain_forced = msg.payload[3];
+            chain_count = read_u32_le_local(msg.payload + 12);
+            awaiting_message = msg.type;
+
+            printf("=== Decoded chain selection ===\n");
+            printf("forced:              %u\n", chain_forced);
+            printf("selectable chains:   %u\n", chain_count);
         }
 
         ++count;
@@ -220,6 +252,29 @@ int main() {
                 OCG_DuelSetResponse(duel, &response, sizeof(response));
 
                 awaiting_message = 0;
+                continue;
+            }
+
+            if(awaiting_message == MSG_SELECT_CHAIN) {
+                int32_t response;
+
+                if(chain_forced) {
+                    if(chain_count == 0) {
+                        printf("ERROR: forced chain selection has no choices.\n");
+                        break;
+                    }
+                    response = 0;
+                    printf("AWAITING: selecting forced chain 0.\n");
+                } else {
+                    response = -1;
+                    printf("AWAITING: declining optional chain.\n");
+                }
+
+                OCG_DuelSetResponse(duel, &response, sizeof(response));
+
+                awaiting_message = 0;
+                chain_forced = 0;
+                chain_count = 0;
                 continue;
             }
 
