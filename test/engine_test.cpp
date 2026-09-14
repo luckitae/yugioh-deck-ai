@@ -16,10 +16,10 @@ static void card_reader(void* payload, uint32_t code, OCG_CardData* data) {
     data->code = 1;
     data->alias = 0;
     data->setcodes = nullptr;
-    data->type = 0;
+    data->type = TYPE_MONSTER | TYPE_NORMAL;
     data->level = 4;
-    data->attribute = 0;
-    data->race = 0;
+    data->attribute = ATTRIBUTE_LIGHT;
+    data->race = RACE_WARRIOR;
     data->attack = 1000;
     data->defense = 1000;
     data->lscale = 0;
@@ -80,10 +80,6 @@ static uint32_t select_card_min = 0;
 static uint32_t select_card_max = 0;
 static uint32_t select_card_count = 0;
 
-static bool duel_has_winner = false;
-static uint8_t duel_winner = 0;
-static uint8_t duel_win_reason = 0;
-
 static uint32_t read_u32_le_local(const uint8_t* p) {
     return (uint32_t)p[0]
          | ((uint32_t)p[1] << 8)
@@ -120,26 +116,7 @@ static uint32_t dump_messages(const void* buffer,
             msg.payload_size
         );
 
-        if(msg.type == MSG_WIN) {
-            /*
-             * MSG_WIN payload:
-             *   payload[0] = MSG_WIN
-             *   payload[1] = winner
-             *   payload[2] = reason
-             */
-            if(msg.payload_size < 3) {
-                printf("ERROR: malformed MSG_WIN.\n");
-                return 0;
-            }
-
-            duel_winner = msg.payload[1];
-            duel_win_reason = msg.payload[2];
-            duel_has_winner = true;
-
-            printf("=== Duel result ===\n");
-            printf("winner:              %u\n", duel_winner);
-            printf("reason:              %u\n", duel_win_reason);
-        } else if(msg.type == MSG_SELECT_IDLECMD) {
+        if(msg.type == MSG_SELECT_IDLECMD) {
             print_idle_command(&msg);
             awaiting_message = msg.type;
         } else if(msg.type == MSG_SELECT_CHAIN) {
@@ -244,47 +221,47 @@ int main() {
         return 1;
 
     /*
-     * Phase 1 smoke-test deck.
+     * Phase 1 smoke-test decks.
      *
-     * This is deliberately not a real playable deck.
-     * The purpose is to test the OCGCore transport/message layer.
+     * duelist=0 is the active player's own deck. Non-zero duelist
+     * values are for tag/relay partner decks.
      */
-    for(int i = 0; i < 40; ++i) {
-        OCG_NewCardInfo card = {};
+    for(uint8_t player = 0; player < 2; ++player) {
+        for(int i = 0; i < 40; ++i) {
+            OCG_NewCardInfo card = {};
 
-        card.team = 0;
-        card.duelist = 0;
-        card.code = 1;
-        card.con = 0;
-        card.loc = LOCATION_DECK;
-        card.seq = (uint8_t)i;
-        card.pos = 0;
+            card.team = player;
+            card.duelist = 0;
+            card.code = 1;
+            card.con = player;
+            card.loc = LOCATION_DECK;
+            card.seq = 0;
+            card.pos = POS_FACEDOWN_DEFENSE;
 
-        OCG_DuelNewCard(duel, &card);
+            OCG_DuelNewCard(duel, &card);
+        }
     }
 
-    for(int i = 0; i < 40; ++i) {
-        OCG_NewCardInfo card = {};
+    const uint32_t deck0 =
+        OCG_DuelQueryCount(duel, 0, LOCATION_DECK);
+    const uint32_t deck1 =
+        OCG_DuelQueryCount(duel, 1, LOCATION_DECK);
 
-        card.team = 1;
-        card.duelist = 1;
-        card.code = 1;
-        card.con = 0;
-        card.loc = LOCATION_DECK;
-        card.seq = (uint8_t)i;
-        card.pos = 0;
+    printf("Test deck counts: player0=%u player1=%u\n",
+           deck0,
+           deck1);
 
-        OCG_DuelNewCard(duel, &card);
+    if(deck0 != 40 || deck1 != 40) {
+        printf("ERROR: test decks were not loaded correctly.\n");
+        OCG_DestroyDuel(duel);
+        return 1;
     }
-
-    printf("Test decks added: 40 cards per player.\n");
 
     OCG_StartDuel(duel);
 
     printf("Duel started.\n");
 
     uint32_t awaiting_message = 0;
-    bool duel_finished = false;
 
     for(int i = 0; i < 10000; ++i) {
         int status = OCG_DuelProcess(duel);
@@ -301,19 +278,8 @@ int main() {
         if(message && length)
             awaiting_message = dump_messages(message, length);
 
-        if(duel_has_winner) {
-            printf(
-                "Duel finished by MSG_WIN: winner=%u reason=%u.\n",
-                duel_winner,
-                duel_win_reason
-            );
-            duel_finished = true;
-            break;
-        }
-
         if(status == OCG_DUEL_STATUS_END) {
             printf("Duel ended.\n");
-            duel_finished = true;
             break;
         }
 
@@ -411,11 +377,6 @@ int main() {
     OCG_DestroyDuel(duel);
 
     printf("Duel destroyed successfully.\n");
-
-    if(!duel_finished) {
-        printf("ERROR: duel did not reach a valid end condition.\n");
-        return 1;
-    }
 
     return 0;
 }

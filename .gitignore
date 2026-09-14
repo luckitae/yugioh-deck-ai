@@ -1,0 +1,9 @@
+build/
+engine_test
+a.out
+*.o
+*.swp
+*.swo
+.DS_Store
+payload_size
+player

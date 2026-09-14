@@ -18,9 +18,12 @@ jobs:
           sudo apt-get install -y clang ninja-build git python3-pip
           python3 -m pip install meson
 
-      - name: Clone ygopro-core
+      - name: Clone pinned ygopro-core
         run: |
-          git clone --recursive https://github.com/edo9300/ygopro-core.git
+          git clone https://github.com/edo9300/ygopro-core.git
+          cd ygopro-core
+          git checkout b8c05dff14da0b13608950a73906287dc0b601f9
+          git submodule update --init --recursive
 
       - name: Configure
         working-directory: ygopro-core
