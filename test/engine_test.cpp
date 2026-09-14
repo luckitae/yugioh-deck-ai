@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
+#include <vector>
 
 #include "ocgapi.h"
 #include "ocgapi_constants.h"
@@ -73,6 +75,11 @@ static void print_idle_command(const DecodedMessage* msg) {
 static uint8_t chain_forced = 0;
 static uint32_t chain_count = 0;
 
+static uint8_t select_card_cancelable = 0;
+static uint32_t select_card_min = 0;
+static uint32_t select_card_max = 0;
+static uint32_t select_card_count = 0;
+
 static uint32_t read_u32_le_local(const uint8_t* p) {
     return (uint32_t)p[0]
          | ((uint32_t)p[1] << 8)
@@ -134,6 +141,38 @@ static uint32_t dump_messages(const void* buffer,
             printf("=== Decoded chain selection ===\n");
             printf("forced:              %u\n", chain_forced);
             printf("selectable chains:   %u\n", chain_count);
+         else if(msg.type == MSG_SELECT_CARD) {
+            /*
+             * payload[0]      = MSG_SELECT_CARD
+             * payload[1]      = player
+             * payload[2]      = cancelable
+             * payload[3..6]   = minimum selection count
+             * payload[7..10]  = maximum selection count
+             * payload[11..14] = selectable card count
+             */
+            if(msg.payload_size < 15) {
+                printf("ERROR: malformed MSG_SELECT_CARD.\n");
+                return 0;
+            }
+
+            select_card_cancelable = msg.payload[2];
+            select_card_min = read_u32_le_local(msg.payload + 3);
+            select_card_max = read_u32_le_local(msg.payload + 7);
+            select_card_count = read_u32_le_local(msg.payload + 11);
+
+            if(select_card_min > select_card_max ||
+               select_card_max > select_card_count) {
+                printf("ERROR: invalid MSG_SELECT_CARD bounds.\n");
+                return 0;
+            }
+
+            awaiting_message = msg.type;
+
+            printf("=== Decoded card selection ===\n");
+            printf("cancelable:           %u\n", select_card_cancelable);
+            printf("minimum:              %u\n", select_card_min);
+            printf("maximum:              %u\n", select_card_max);
+            printf("selectable cards:     %u\n", select_card_count);
         }
 
         ++count;
@@ -275,6 +314,57 @@ int main() {
                 awaiting_message = 0;
                 chain_forced = 0;
                 chain_count = 0;
+                continue;
+            }
+
+            if(awaiting_message == MSG_SELECT_CARD) {
+                /*
+                 * parse_response_cards() type 0 format:
+                 *
+                 * int32_t  type = 0
+                 * uint32_t count
+                 * uint32_t indices[count]
+                 *
+                 * The smoke-test bot deterministically selects the first
+                 * minimum number of legal cards.
+                 */
+                if(select_card_min > select_card_count) {
+                    printf("ERROR: cannot satisfy card selection minimum.\n");
+                    break;
+                }
+
+                std::vector<uint8_t> response(
+                    8 + select_card_min * sizeof(uint32_t),
+                    0
+                );
+
+                int32_t type = 0;
+                uint32_t count = select_card_min;
+
+                memcpy(response.data(), &type, sizeof(type));
+                memcpy(response.data() + 4, &count, sizeof(count));
+
+                for(uint32_t j = 0; j < count; ++j)
+                    memcpy(response.data() + 8 + j * 4,
+                           &j,
+                           sizeof(j));
+
+                printf(
+                    "AWAITING: selecting first %u card(s).\n",
+                    count
+                );
+
+                OCG_DuelSetResponse(
+                    duel,
+                    response.data(),
+                    (uint32_t)response.size()
+                );
+
+                awaiting_message = 0;
+                select_card_cancelable = 0;
+                select_card_min = 0;
+                select_card_max = 0;
+                select_card_count = 0;
                 continue;
             }
 
