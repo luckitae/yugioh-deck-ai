@@ -70,11 +70,12 @@ static void print_idle_command(const DecodedMessage* msg) {
     printf("can shuffle:         %u\n", idle.can_shuffle);
 }
 
-static void dump_messages(const void* buffer,
-                          uint32_t length) {
+static uint32_t dump_messages(const void* buffer,
+                              uint32_t length) {
     const uint8_t* data = (const uint8_t*)buffer;
     uint32_t offset = 0;
     int count = 0;
+    uint32_t awaiting_message = 0;
 
     printf("=== Message stream (%u bytes) ===\n", length);
 
@@ -86,7 +87,7 @@ static void dump_messages(const void* buffer,
                                 &offset,
                                 &msg)) {
             printf("ERROR: malformed message frame.\n");
-            return;
+            return 0;
         }
 
         printf(
@@ -100,12 +101,15 @@ static void dump_messages(const void* buffer,
 
         if(msg.type == MSG_SELECT_IDLECMD) {
             print_idle_command(&msg);
+            awaiting_message = msg.type;
         }
 
         ++count;
     }
 
     printf("Decoded %d message frame(s).\n", count);
+
+    return awaiting_message;
 }
 
 int main() {
@@ -185,6 +189,8 @@ int main() {
 
     printf("Duel started.\n");
 
+    uint32_t awaiting_message = 0;
+
     for(int i = 0; i < 100; ++i) {
         int status = OCG_DuelProcess(duel);
 
@@ -198,7 +204,7 @@ int main() {
             OCG_DuelGetMessage(duel, &length);
 
         if(message && length)
-            dump_messages(message, length);
+            awaiting_message = dump_messages(message, length);
 
         if(status == OCG_DUEL_STATUS_END) {
             printf("Duel ended.\n");
@@ -206,10 +212,18 @@ int main() {
         }
 
         if(status == OCG_DUEL_STATUS_AWAITING) {
-            printf(
-                "AWAITING: idle command received; "
-                "response handling is the next phase.\n"
-            );
+            if(awaiting_message == MSG_SELECT_IDLECMD) {
+                int32_t response = 7;
+
+                printf("AWAITING: sending End Phase response.\n");
+
+                OCG_DuelSetResponse(duel, &response, sizeof(response));
+
+                awaiting_message = 0;
+                continue;
+            }
+
+            printf("ERROR: unsupported AWAITING message.\n");
             break;
         }
     }
