@@ -26,3 +26,8 @@ __pycache__/
 /phase4_validate
 /phase4_validate_san
 /phase4_update*.zip
+
+# Phase 5-B: local duel binaries and delivery archive
+/phase5_duel
+/phase5b_unit
+/phase5b_update*.zip

@@ -1,0 +1,18 @@
+{
+  "files": {
+    ".github/workflows/build.yml": "2e4242c44c971e9f5692634c6a4e764ba9236bd92548d6fa23bf2ece08efb5c5",
+    ".gitignore": "84d18bc78ad64c17e28df14006e35b45835fbadd59c6fb2f8588c75df3af27ae",
+    "README.md": "c41810473518dadf109a404c95dbc8d62905fdc1131efb72f8740dea80d80aa3",
+    "docs/PHASE5.md": "e9ea69d778c41f6f79fa6fb03d504407f7d9a3f0e50f672484263f2f55c51343",
+    "docs/PHASE5_LOCAL_VALIDATION.md": "d1d30478f744e517677b1a3c759e55942f2373046b3e0c2acf6cf3eb722f85c9",
+    "src/protocol/bot_response.cpp": "caf2aaf53c1e6bd265064de9cbc74a55602257b73fed6132314c91352bcab488",
+    "src/protocol/bot_response.h": "ff5baa0c44be0a396fe40a88fd8ff521fc474b671660b945bd49ccdc9f816604",
+    "test/phase5b_unit.cpp": "cab2252cf5e711bb2211d3b6a72c36eff36bc0e53ca102e548e3806103e85dcb",
+    "tools/check_phase5b_install.py": "60627f9a79caa3860a22eeea48209789e8df6ff398af65ccaa4cd18a9ce43d0d",
+    "tools/phase5_duel.cpp": "efdbb2a960f890f3298bcd70e8194a912e4d206767e1c7b8073abfc64796e7ff",
+    "tools/run_phase5b_tests.py": "212b4898b4591ddf082aed72d6519f058590d9bf6d390dec2630cf334a1ce52c"
+  },
+  "note": "Delivery integrity only; Phase 5-B fixture duels are not final optimization win rate.",
+  "phase": "5-B",
+  "schema": 1
+}

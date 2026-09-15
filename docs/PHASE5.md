@@ -1,68 +1,117 @@
-# Phase 5-A — 제약 보존 GA + 저비용 Prescreen
+# Phase 5 — 탐색과 실제 듀얼 평가
 
 기준일: 2026-09-15
 
-## 목적
+## Phase 5-A — 제약 보존 GA + 저비용 Prescreen
 
-Phase 4가 만든 100개 초기 덱을 바로 수천 판씩 듀얼시키기 전에, 구조 제약을 보존하는 탐색 연산과 저비용 선별 단계를 먼저 만든다.
+Phase 4의 100개 초기 덱을 바로 대량 듀얼시키기 전에 구조 제약을 보존하는 mutation/search kernel을 만든 단계다.
 
-이번 단계는 **실제 승률 최적화가 아니다.** `phase5-lowcost-v1` 점수는 다음 두 값만 사용한다.
-
-1. Main Deck의 각 필수 카드를 첫 5장에서 볼 확률의 평균(70%)
-2. Phase 3 후보 관계 점수의 정규화 평균(30%)
-
-둘 다 휴리스틱이며 카드 효과의 실제 강도·콤보 성공률·매치업 승률을 증명하지 않는다. 출력에는 항상 `duel_evaluated=false`, `win_rate_evaluated=false`, `fitness_kind=low-cost-prescreen-not-winrate`를 기록한다.
-
-## GA 구조
-
-기본 설정은 Phase 4의 100개 중 48개를 탐색 population으로 사용하고 4세대, elite 8개, tournament 4개로 실행한다.
+`phase5-lowcost-v1` 점수는 필수 카드 첫 5장 접근성 70% + Phase 3 관계 점수 30%의 deterministic 정수 지표다. 승률 추정치가 아니다.
 
 지원 mutation:
 
-- `replace_card`: 보호되지 않은 Main 카드 1장 교체
-- `copy_up`: 기존 카드 매수 +1, Main 총량 증가
-- `copy_down`: 기존 카드 매수 -1, Main 총량 감소
-- `pool_rebalance`: ENGINE ↔ GENERIC 교체
-- `package_add`: Package + dependency 최소 매수 추가
-- `package_remove`: root package 제거 후 더 이상 필요하지 않은 멤버 정리
+- `replace_card`
+- `copy_up`
+- `copy_down`
+- `pool_rebalance`
+- `package_add`
+- `package_remove`
 
-모든 child는 다음 검사를 다시 통과해야 population에 들어간다.
+모든 child는 Main 40~60, Extra/Side 0~15, 필수 카드·최소 매수, alias 합산 매수, rules profile, Main/Extra 구역, Package dependency/minimum, candidate pool membership을 다시 검사한다.
 
-- Main 40~60
-- Extra/Side 0~15
-- 필수 카드/최소 매수
-- alias 합산 매수 제한
-- 현재 rules profile 제한
-- Main/Extra 구역
-- 선택 Package 및 dependency 최소 매수
-- candidate pool 밖 카드 금지
-- deck identity 중복 제거
+## Phase 5-B — 실제 OCGCore Duel Runner
 
-Elite는 그대로 보존하므로 같은 prescreen 점수 기준 최상위 점수는 세대가 진행되며 감소하지 않아야 한다.
+### 목적
 
-## 입력
+Phase 5-A가 만든 YDK를 실제 OCGCore에 넣고 **엔진이 요구한 선택에 합법 response를 보내 한 판을 끝까지 실행**한다.
 
-- Phase 2 DB: `data/vendor/BabelCDB/cards.cdb`
-- Phase 3 candidate pool JSON
-- Phase 4 population directory (`population.json`, `packages.json`, `decks/`)
-- Phase 4 rules profile
-- `data/search/phase5-lowcost-v1.json`
+새 구성:
 
-Phase 4 manifest의 DB/rules/candidate pool SHA-256이 현재 입력과 다르면 실행을 거절한다. 오래된 population을 다른 DB/후보 풀에 섞지 않는다.
+```text
+Phase 5-A YDK
+   │
+   ▼
+phase5_duel
+   │
+   ├─ OCGCore 11.0 / pinned DB / pinned CardScripts
+   ├─ message_decoder
+   └─ first-legal-v1 Bot
+          │
+          ▼
+      OCG_DuelSetResponse
+          │
+          ▼
+ winner / reason / turns / selections / action trace
+```
 
-## 출력
+### first-legal-v1 정책
 
-`search.json`, `SUMMARY.txt`, 최종 48개 `.ydk`를 저장한다. `search.json`은 세대별 best/mean/worst prescreen 점수, mutation별 채택 수, 실패 횟수, parent deck id를 기록한다.
+강도 학습용 정책이 아니라 **합법성/실행 기반을 확보하기 위한 deterministic baseline**이다.
 
-## 다음 단계 — Phase 5-B
+주요 동작:
 
-이 단계의 결과를 최종 덱으로 사용하지 않는다. 다음 구현은 범용 Duel Runner와 legal-response Bot을 만들어 실제 OCGCore 듀얼을 반복하고 다음을 기록한다.
+- Idle: 효과 발동 → 특수 소환 → 일반 소환 → 표시 변경 → 세트 → Battle/End 순으로 진행
+- Battle: 효과 발동 → 공격 → Main2/End
+- Yes/No: Yes
+- Option: index 0
+- Chain: 가능한 첫 chain, 없으면 pass
+- Card: 최소 요구 장수의 앞쪽 candidate
+- Place/Position: 첫 합법 zone / 공격 표시 우선
+- Tribute: release value를 만족하는 deterministic subset
+- Counter: 앞 카드부터 필요한 수만큼 분배
+- Sum: exact mode는 DP로 합 조건을 만족하는 subset 탐색
+- Sort: 현재 순서 유지
+- Race/Attribute/Number 선언: deterministic 첫 합법 선택
+- Announce Card: pinned DB 전체에서 OCGCore opcode 조건을 만족하는 첫 declarable card
+
+지원하지 않는 prompt나 malformed payload에는 임의 bytes를 보내지 않는다. `unsupported_selection` 또는 `protocol_error`로 종료한다. OCGCore의 `MSG_RETRY`도 실패다.
+
+### Duel Runner 출력
+
+`phase5_duel`은 JSON 결과와 선택 trace(JSONL)를 출력한다.
+
+결과 주요 필드:
 
 - seed
-- 선/후공
-- winner/reason
-- turn count
-- deck id
-- protocol/resource error
+- winner / reason
+- turn count / process calls
+- selection count
+- summon / special summon / attack / chain / damage 집계
+- prompt별 횟수
+- action별 횟수
+- script/card-reader error 수
 
-그 뒤 저비용 prescreen은 비싼 듀얼의 **전처리**로만 남기고, 실제 승률을 최우선 Fitness로 연결한다.
+Trace는 각 selection의 player, prompt, action, 선택 카드 code/index와 주요 turn/attack/damage event를 기록한다. 이후 Play Analyzer의 입력으로 사용한다.
+
+## Phase 5-B 통합 게이트
+
+Actions에서는 Phase 5-A `search_a`의 상위 2개 실제 생성 덱을 사용한다. 상대는 고정 DB에서 고른 **서로 다른 일반 몬스터 40장 test fixture**다.
+
+각 후보를:
+
+- seed 1, 42
+- candidate가 player 0 / player 1 양쪽 좌석
+
+으로 실행해 총 **8 real OCGCore duels**을 요구한다.
+
+통과 조건:
+
+- 8판 모두 `status=finished`
+- `MSG_WIN`으로 winner/reason 획득
+- selection/turn 실제 발생
+- Lua engine error 0
+- trace 파일 생성
+- 적어도 2종 이상의 selection prompt 실제 관찰
+
+이 fixture 승률은 실제 엔진에서 계산된 값이지만 **최종 덱 Fitness가 아니다.** 상대 덱이 일반적인 경쟁 덱 Pool이 아니기 때문이다.
+
+## 다음 단계 — Phase 5-C
+
+1. 상대 덱 Pool 입력 형식과 고정 snapshot 확정
+2. candidate × opponent × seed × 선/후공 반복 평가
+3. 실패/timeout을 승리로 처리하지 않는 evaluator
+4. 실제 승률을 최우선 Fitness로 연결
+5. Phase 5-A prescreen은 비싼 듀얼 전처리로만 사용
+6. 듀얼 trace를 Play Analyzer로 연결
+
+특정 Bot/상대 덱 Pool의 품질이 충분한지는 Phase 5-C에서 별도 검증한다.
