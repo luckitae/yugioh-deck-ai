@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "phase5-lowcost-v1",
+  "kind": "prescreen-not-winrate",
+  "weights": {
+    "required_access": 700,
+    "relation_quality": 300
+  },
+  "note": "Phase 5-A pre-screen only. This score is not a duel win-rate estimate and must not be used as final fitness."
+}

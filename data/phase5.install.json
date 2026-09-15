@@ -1,0 +1,19 @@
+{
+  "files": {
+    ".github/workflows/build.yml": "ca59d35110b862737af0cefd0c71361a0574785b032449418b1a7345987f99d9",
+    "README.md": "a5822978e5a79b01ded22cfec6b1df382cb4864061d1e75cbeea66cf8d03b120",
+    "data/search/phase5-lowcost-v1.json": "a4df1eea88215cb34128812f14befc1a34fcc4c3c1ae9876929eb616c76bc9d1",
+    "docs/PHASE5.md": "d2a9106287d001f2e18d4afd2d6c00f5edbe9df9aa140d820a5f8841c0c809cb",
+    "docs/PHASE5_LOCAL_VALIDATION.md": "cc8e695c0d56b3bdbbc2b72be42165daa2c68cc102e29a1abfc04829012a912c",
+    "src/search/__init__.py": "60414f678201a8f51ab0c24c0bae46496b8f8fa9a53890a90e17b5bc2194f21f",
+    "src/search/fitness.py": "9a15c2016db1fc53d180462e4e339afa0ebff9a237a1641ea9bebe22c30cab79",
+    "src/search/ga.py": "de37189e13bae85240127e942dc9c063f6ae8ff68ec47c9009b2974c24a3a43e",
+    "test/phase5_unit.py": "f6e93e028ba438d45bbde6f5bd9c2b39b4c8435453f557a3b8c271c760723f2a",
+    "tools/check_phase5_install.py": "ad98201c8b414af73e20bb3370cd04a53b2339d1427e2b7f0f82bf75edde1f23",
+    "tools/phase5_optimize.py": "fca3995b1aa36500fe2bf21c49984fd9150cb484b8677f4470d330c824cbcbfe",
+    "tools/run_phase5_tests.py": "33b87ec83ae1d8944f467d07cc6c8c1e8090196163208b183e9e865c7517bc7a"
+  },
+  "note": "Delivery integrity only; does not certify duel strength or tournament legality.",
+  "phase": "5-A",
+  "schema": 1
+}

@@ -117,6 +117,16 @@ jobs:
           set -o pipefail
           python3 tools/run_phase4_tests.py 2>&1 | tee artifacts/phase4_console.log
 
+      - name: Run Phase 5-A unit tests
+        run: |
+          set -o pipefail
+          python3 test/phase5_unit.py 2>&1 | tee artifacts/phase5_unit.log
+
+      - name: Run Phase 5-A real-data GA prescreen tests
+        run: |
+          set -o pipefail
+          python3 tools/run_phase5_tests.py 2>&1 | tee artifacts/phase5_console.log
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -152,3 +162,15 @@ jobs:
             artifacts/phase4_*.log
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Upload Phase 5-A results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5a-test-results
+          path: |
+            artifacts/phase5/
+            artifacts/phase5_*.log
+          if-no-files-found: warn
+          retention-days: 14
+
