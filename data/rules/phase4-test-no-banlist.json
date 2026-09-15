@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "phase4-test-no-banlist-v1",
+  "kind": "test-only",
+  "scope_mask": 3,
+  "default_limit": 3,
+  "limits": {},
+  "source": "Project integration fixture; not an official OCG/TCG forbidden-limited list",
+  "note": "Main 40..60; Extra/Side 0..15; alias-group copies combined. No dated banlist or regional release verification."
+}

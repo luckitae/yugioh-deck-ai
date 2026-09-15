@@ -18,3 +18,11 @@ payload_size;
 /phase2_update*.zip
 __pycache__/
 *.pyc
+
+# Phase 3/4: local binaries and delivery archives
+/phase3_analyze
+/phase3_unit
+/phase3_update*.zip
+/phase4_validate
+/phase4_validate_san
+/phase4_update*.zip
