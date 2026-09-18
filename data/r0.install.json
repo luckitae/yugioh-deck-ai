@@ -1,0 +1,16 @@
+{
+  "base_commit": "a8247b36afdb6c398cbd1c9c4c642f40cae6ebcd",
+  "baseline_phase5c_duel_fitness_sha256": "13686b9f60b381a3ec5125c7b0122c9f75c69617d2d3e7c35350bdd809141e97",
+  "files": {
+    ".github/workflows/build.yml": "81f628731163a0c9c95d395fe64fc48c4c329cc77b7f21fa47701cbb2d971c5c",
+    "src/search/duel_fitness.py": "dd8a41c6057dbedcecc1064bd9f69d7c65bf127618b760c2c49b04ba675f4554",
+    "test/phase5c_unit.py": "f42771a0319808d3701ea8686bb6cc74a36c2882c78cbf6b81a7fc417bf7f260",
+    "tools/check_r0_install.py": "dc9b99d910314df06a02cf6a4a03a410320ceb76538f089b0b9c3cea7ff88ce0",
+    "tools/phase5_duel.cpp": "6d3b46792f3f2e818013cf3420fde84b27f5d8a53aeafcbeafdcdca9dc643228",
+    "tools/run_phase5b_tests.py": "a5142bd1742f66de4cffa9edc516593e91f5287e342e4af2311d5be311046c83",
+    "tools/run_phase5c_tests.py": "5411f10bbaa978b285e07afab3abddbed5a3a3e3c3eaf0a4da90f508d88162db"
+  },
+  "phase": "R0",
+  "purpose": "Evaluator result-integrity contract and failure normalization before R1.",
+  "schema": 1
+}

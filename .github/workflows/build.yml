@@ -147,7 +147,12 @@ jobs:
           set -o pipefail
           python3 tools/run_phase5b_tests.py 2>&1 | tee artifacts/phase5b_console.log
 
-      - name: Run Phase 5-C duel-fitness unit tests
+      - name: Check R0 evaluator-contract patch install
+        run: |
+          set -o pipefail
+          python3 tools/check_r0_install.py 2>&1 | tee artifacts/r0_install.log
+
+      - name: Run R0 / Phase 5-C duel-fitness unit tests
         run: |
           set -o pipefail
           python3 test/phase5c_unit.py 2>&1 | tee artifacts/phase5c_unit.log
@@ -222,6 +227,7 @@ jobs:
           path: |
             artifacts/phase5c/
             artifacts/phase5c_*.log
+            artifacts/r0_*.log
           if-no-files-found: warn
           retention-days: 14
 

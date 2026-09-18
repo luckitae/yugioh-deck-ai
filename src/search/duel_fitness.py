@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import uuid
 from typing import Any
 
 from deck.rules import SECTIONS, json_text, read_json, ydk_text
@@ -165,6 +166,8 @@ def aggregate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             raise DuelFitnessError("duel case missing seat/opponent")
         if row.get("status") == "finished" and row.get("outcome") not in ("win", "draw", "loss"):
             raise DuelFitnessError("finished duel case has invalid outcome")
+        if row.get("status") != "finished" and row.get("outcome") is not None:
+            raise DuelFitnessError("failed duel case must have null outcome")
     overall = _breakdown(cases)
     complete = overall["failures"] == 0
     per_seat = {
@@ -210,10 +213,20 @@ def _deck_fingerprint(deck: dict[str, list[int]]) -> str:
     return hashlib.sha256(json_text(body).encode("utf-8")).hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class DuelEvaluator:
     """``search.ga.run_search``가 호출할 수 있는 실제 duel evaluator.
 
     같은 덱 identity는 현재 evaluator 인스턴스에서 한 번만 실행하고 캐시한다.
+    각 subprocess 실행에는 고유 run/attempt ID를 부여하고, 성공 exit + 정확한
+    결과 provenance + 완전한 trace가 모두 일치할 때만 정상 듀얼로 집계한다.
     """
 
     def __init__(self, runner: Path, db: Path, scripts: Path, opponents: list[Opponent],
@@ -237,58 +250,191 @@ class DuelEvaluator:
             directory.mkdir(parents=True, exist_ok=True)
         self.cache: dict[str, dict[str, Any]] = {}
         self.runner_invocations = 0
+        self.run_id = uuid.uuid4().hex
+
+    @staticmethod
+    def _failure_status(raw_status: Any) -> str:
+        mapping = {
+            "unsupported_selection": "unsupported",
+            "input_error": "input_error",
+            "protocol_error": "protocol_error",
+            "resource_error": "resource_error",
+            "limit_exceeded": "limit_exceeded",
+            "no_result": "no_result",
+        }
+        return mapping.get(raw_status, "runner_error")
+
+    @staticmethod
+    def _trace_error(trace_path: Path, winner: int, expected_events: int) -> str | None:
+        try:
+            raw = trace_path.read_bytes()
+        except OSError as error:
+            return f"trace read error: {error}"
+        if not raw:
+            return "finished runner result has empty trace"
+        if not raw.endswith(b"\n"):
+            return "trace is truncated (missing final newline)"
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            return f"trace is not valid UTF-8: {error}"
+        rows: list[dict[str, Any]] = []
+        previous_seq = 0
+        for index, line in enumerate(text.splitlines(), start=1):
+            if not line:
+                return f"trace line {index} is empty"
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as error:
+                return f"trace line {index} is invalid JSON: {error}"
+            if not isinstance(row, dict):
+                return f"trace line {index} is not an object"
+            seq = row.get("seq")
+            kind = row.get("kind")
+            if type(seq) is not int or seq <= previous_seq:
+                return f"trace line {index} has invalid/non-increasing seq"
+            if not isinstance(kind, str) or not kind:
+                return f"trace line {index} has invalid kind"
+            previous_seq = seq
+            rows.append(row)
+        if type(expected_events) is not int or expected_events <= 0 or len(rows) != expected_events:
+            return "trace event count does not match result"
+        last = rows[-1]
+        if last.get("kind") != "win" or type(last.get("player")) is not int or last.get("player") != winner:
+            return "trace does not end with the reported winner"
+        return None
+
+    @staticmethod
+    def _validate_success_payload(payload: dict[str, Any], *, run_id: str, attempt_id: str,
+                                  seed: int, deck0: Path, deck1: Path,
+                                  trace_path: Path) -> tuple[str | None, str]:
+        if type(payload.get("schema")) is not int or payload.get("schema") != 2 or payload.get("result_type") != "duel":
+            return "invalid_result", "runner result schema/type mismatch"
+        if payload.get("runner") != "phase5b-duel-runner-v2" or payload.get("engine_api") != "11.0":
+            return "provenance_error", "runner/engine identity mismatch"
+        if payload.get("run_id") != run_id or payload.get("attempt_id") != attempt_id:
+            return "provenance_error", "runner result run/attempt ID mismatch"
+        if payload.get("completed") is not True or payload.get("status") != "finished":
+            return "invalid_result", "success exit did not report completed finished result"
+        if payload.get("error") != "":
+            return "invalid_result", "finished result contains an error string"
+        if payload.get("policy") != "first-legal-v1" or type(payload.get("first_player")) is not int or payload.get("first_player") != 0:
+            return "provenance_error", "runner result first-player/policy mismatch"
+        if type(payload.get("seed")) is not int or payload.get("seed") != seed:
+            return "provenance_error", "runner result seed mismatch"
+        winner = payload.get("winner")
+        reason = payload.get("reason")
+        if type(winner) is not int or winner not in (0, 1, 2):
+            return "invalid_result", "finished result has invalid winner"
+        if type(reason) is not int or not 0 <= reason <= 255:
+            return "invalid_result", "finished result has invalid win reason"
+        for key in ("process_calls", "turns", "selections", "trace_events", "engine_errors"):
+            if type(payload.get(key)) is not int or payload[key] < 0:
+                return "invalid_result", f"finished result has invalid {key}"
+        if payload["process_calls"] <= 0 or payload["trace_events"] <= 0:
+            return "invalid_result", "finished runner result did not exercise process/trace"
+        if payload["engine_errors"] != 0:
+            return "engine_error", "runner reported engine script errors"
+        expected_decks = [str(deck0), str(deck1)]
+        deck_files = payload.get("deck_files")
+        if not isinstance(deck_files, list) or deck_files != expected_decks or any(not isinstance(item, str) for item in deck_files):
+            return "provenance_error", "runner result deck file identity mismatch"
+        if payload.get("trace_file") != str(trace_path):
+            return "provenance_error", "runner result trace path mismatch"
+        return None, ""
 
     def _run_case(self, fingerprint: str, candidate: Path, opponent: Opponent,
                   seed: int, seat: int) -> dict[str, Any]:
         case_id = f"{fingerprint[:16]}__{opponent.id}__seed{seed}__seat{seat}"
-        result_path = self.case_dir / f"{case_id}.json"
-        trace_path = self.case_dir / f"{case_id}.jsonl"
-        log_path = self.case_dir / f"{case_id}.log"
+        attempt_id = uuid.uuid4().hex
+        stem = f"{case_id}__{attempt_id[:12]}"
+        result_path = self.case_dir / f"{stem}.json"
+        trace_path = self.case_dir / f"{stem}.jsonl"
+        log_path = self.case_dir / f"{stem}.log"
         deck0, deck1 = (candidate, opponent.file) if seat == 0 else (opponent.file, candidate)
+        deck0_sha256 = _file_sha256(deck0)
+        deck1_sha256 = _file_sha256(deck1)
+        if any(path.exists() for path in (result_path, trace_path, log_path)):
+            raise DuelFitnessError("fresh duel output path collision")
         command = [str(self.runner), "--db", str(self.db), "--scripts", str(self.scripts),
                    "--deck0", str(deck0), "--deck1", str(deck1), "--seed", str(seed),
                    "--policy", "first-legal-v1", "--max-calls", str(self.schedule.max_calls),
+                   "--run-id", self.run_id, "--attempt-id", attempt_id,
                    "--result", str(result_path), "--trace", str(trace_path)]
         command += _required_flags(self.required, seat)
         self.runner_invocations += 1
         status = "runner_error"
         error = ""
         payload: dict[str, Any] | None = None
+        raw_runner_status: str | None = None
+        returncode: int | None = None
         try:
             completed = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        timeout=self.schedule.timeout_seconds)
+            returncode = completed.returncode
             log_path.write_text(completed.stdout, encoding="utf-8")
+            input_identity_error = ""
+            try:
+                if _file_sha256(deck0) != deck0_sha256 or _file_sha256(deck1) != deck1_sha256:
+                    input_identity_error = "runner input deck changed during execution"
+            except OSError as input_error:
+                input_identity_error = f"runner input deck identity read error: {input_error}"
             if result_path.is_file():
-                payload = json.loads(result_path.read_text(encoding="utf-8"))
+                try:
+                    loaded = json.loads(result_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        payload = loaded
+                        raw = loaded.get("status")
+                        raw_runner_status = raw if isinstance(raw, str) else None
+                    else:
+                        error = "runner result JSON is not an object"
+                except (OSError, UnicodeError, json.JSONDecodeError) as result_error:
+                    error = f"runner result read error: {result_error}"
+
+            # R0 핵심: subprocess가 실패했다면 JSON이 finished라고 주장해도 절대 정상 승패가 아니다.
             if completed.returncode != 0:
-                status = str(payload.get("status")) if isinstance(payload, dict) else "runner_error"
-                error = str(payload.get("error", "")) if isinstance(payload, dict) else f"runner exit {completed.returncode}"
-            elif not isinstance(payload, dict):
+                status = self._failure_status(raw_runner_status)
+                if raw_runner_status == "finished":
+                    status = "runner_error"
+                    error = f"runner exit {completed.returncode} with contradictory finished result"
+                elif not error:
+                    if isinstance(payload, dict) and isinstance(payload.get("error"), str) and payload.get("error"):
+                        error = payload["error"]
+                    else:
+                        error = f"runner exit {completed.returncode}"
+            elif input_identity_error:
+                status = "provenance_error"
+                error = input_identity_error
+            elif not result_path.is_file():
                 status = "missing_result"
                 error = "runner returned success without result JSON"
-            elif payload.get("status") != "finished" or payload.get("winner") not in (0, 1, 2):
-                status = str(payload.get("status", "invalid_result"))
-                error = str(payload.get("error", ""))
-            elif payload.get("engine_errors") != 0:
-                status = "engine_error"
-                error = "runner reported engine script errors"
-            elif payload.get("seed") != seed or payload.get("first_player") != 0 or payload.get("policy") != "first-legal-v1":
-                status = "provenance_error"
-                error = "runner result seed/first-player/policy mismatch"
-            elif type(payload.get("turns")) is not int or payload["turns"] <= 0 or type(payload.get("selections")) is not int or payload["selections"] <= 0:
+            elif not isinstance(payload, dict):
                 status = "invalid_result"
-                error = "finished runner result did not exercise turns/selections"
-            elif not trace_path.is_file() or trace_path.stat().st_size == 0:
-                status = "missing_trace"
-                error = "finished runner result has no trace"
+                if not error:
+                    error = "runner returned success with invalid result JSON"
             else:
-                status = "finished"
+                invalid_status, invalid_error = self._validate_success_payload(
+                    payload, run_id=self.run_id, attempt_id=attempt_id, seed=seed,
+                    deck0=deck0, deck1=deck1, trace_path=trace_path)
+                if invalid_status is not None:
+                    status = invalid_status
+                    error = invalid_error
+                elif not trace_path.is_file():
+                    status = "missing_trace"
+                    error = "finished runner result has no trace"
+                else:
+                    trace_error = self._trace_error(trace_path, payload["winner"], payload["trace_events"])
+                    if trace_error is not None:
+                        status = "trace_error"
+                        error = trace_error
+                    else:
+                        status = "finished"
         except subprocess.TimeoutExpired as timeout:
             text = timeout.stdout if isinstance(timeout.stdout, str) else ""
             log_path.write_text(text or "TIMEOUT\n", encoding="utf-8")
             status = "timeout"
             error = "duel runner timeout"
-        except (OSError, ValueError, json.JSONDecodeError) as run_error:
+        except OSError as run_error:
             log_path.write_text(str(run_error) + "\n", encoding="utf-8")
             status = "runner_error"
             error = str(run_error)
@@ -303,15 +449,20 @@ class DuelEvaluator:
         else:
             outcome = None
         return {
+            "run_id": self.run_id,
+            "attempt_id": attempt_id,
             "opponent_id": opponent.id,
             "seed": seed,
             "seat": seat,
             "candidate_first": seat == 0,
             "status": status,
+            "runner_status": raw_runner_status,
+            "runner_exit_code": returncode,
             "outcome": outcome,
             "winner": winner,
             "turns": payload.get("turns") if isinstance(payload, dict) else None,
             "selections": payload.get("selections") if isinstance(payload, dict) else None,
+            "input_sha256": {"deck0": deck0_sha256, "deck1": deck1_sha256},
             "error": error,
             "result_file": result_path.relative_to(self.work_dir).as_posix() if result_path.is_file() else None,
             "trace_file": trace_path.relative_to(self.work_dir).as_posix() if trace_path.is_file() else None,
@@ -338,7 +489,8 @@ class DuelEvaluator:
                 for seat in (0, 1):
                     cases.append(self._run_case(fingerprint, candidate, opponent, seed, seat))
         metrics = aggregate_cases(cases)
-        record = {"schema": 1, "deck_fingerprint": fingerprint, "metrics": metrics, "cases": cases}
+        record = {"schema": 1, "run_id": self.run_id, "deck_fingerprint": fingerprint,
+                  "metrics": metrics, "cases": cases}
         (self.eval_dir / f"{fingerprint}.json").write_text(json_text(record), encoding="utf-8", newline="\n")
         # run_search는 metrics만 필요하다. cases는 별도 evaluation JSON에 저장해 population manifest 폭증을 막는다.
         result = {**metrics, "evaluation_file": (self.eval_dir / f"{fingerprint}.json").relative_to(self.work_dir).as_posix()}

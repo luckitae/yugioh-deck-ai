@@ -155,6 +155,14 @@ def validate_output(directory: Path) -> dict:
         raise RuntimeError("held-out opponent leaked into best evaluation")
     if {case["seat"] for case in cases} != {0, 1} or {case["seed"] for case in cases} != {1}:
         raise RuntimeError("best evaluation seed/seat schedule mismatch")
+    if any(not isinstance(case.get("run_id"), str) or not isinstance(case.get("attempt_id"), str) for case in cases):
+        raise RuntimeError("best evaluation missing run/attempt identity")
+    if any(case.get("runner_exit_code") != 0 or case.get("runner_status") != "finished" for case in cases):
+        raise RuntimeError("best evaluation contains non-success runner process")
+    if any(set(case.get("input_sha256", {})) != {"deck0", "deck1"} or
+           any(not isinstance(value, str) or len(value) != 64 for value in case.get("input_sha256", {}).values())
+           for case in cases):
+        raise RuntimeError("best evaluation missing exact deck input hashes")
 
     source = json.loads((SEARCH / "search.json").read_text(encoding="utf-8"))
     required = source["required"]["main"]

@@ -56,14 +56,21 @@ def make_normal_fixture(path: Path) -> None:
 def duel(name: str, deck0: Path, deck1: Path, seed: int, required: dict[str, int], required_player: int) -> dict:
     result_path = ART / f"{name}.json"
     trace_path = ART / f"{name}.jsonl"
+    run_id = "phase5b-ci"
+    attempt_id = name.replace("_", "-")
     command = [str(RUNNER), "--db", str(DB), "--scripts", str(SCRIPTS),
                "--deck0", str(deck0), "--deck1", str(deck1), "--seed", str(seed),
                "--policy", "first-legal-v1", "--max-calls", "200000",
+               "--run-id", run_id, "--attempt-id", attempt_id,
                "--result", str(result_path), "--trace", str(trace_path)]
     for code, count in sorted(required.items(), key=lambda kv: int(kv[0])):
         command += [f"--required-main{required_player}", f"{code}={count}"]
     run(name, command)
     payload = json.loads(result_path.read_text(encoding="utf-8"))
+    if (payload.get("schema") != 2 or payload.get("result_type") != "duel" or
+            payload.get("runner") != "phase5b-duel-runner-v2" or payload.get("completed") is not True or
+            payload.get("run_id") != run_id or payload.get("attempt_id") != attempt_id):
+        raise RuntimeError(f"{name}: R0 runner result contract mismatch")
     if payload.get("status") != "finished" or payload.get("winner") not in (0, 1, 2):
         raise RuntimeError(f"{name}: not a finished duel")
     if payload.get("selections", 0) <= 0 or payload.get("turns", 0) <= 0:
@@ -130,7 +137,7 @@ def main() -> int:
         summary = {
             "schema": 1,
             "status": "pass",
-            "runner": "phase5b-duel-runner-v1",
+            "runner": "phase5b-duel-runner-v2",
             "policy": "first-legal-v1",
             "actual_engine_duels": finished,
             "candidate_decks": 2,
