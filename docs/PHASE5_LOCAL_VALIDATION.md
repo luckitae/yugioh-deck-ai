@@ -1,79 +1,101 @@
 # Phase 5 로컬 검증 범위
 
-기준일: 2026-09-15
+기준일: 2026-09-18
 
-## Phase 5-A 기존 기준
-
-사용자 GitHub Actions에서 다음 게이트가 통과했다.
+## 사용자 Actions에서 이미 통과한 기준
 
 ```text
 PHASE5-A SUITE PASS: 48-deck GA prescreen, deterministic repeat, seed sensitivity, constraints, C++ validation; 0 duels
-```
-
-## Phase 5-B 이 제출본에서 실행한 검사
-
-### 1. legal-response 단위 검사
-
-고정 OCGCore 헤더를 사용해 `-Wall -Wextra -Werror -pedantic`로 빌드 후 실행했다.
-
-결과:
-
-```text
-PHASE5-B UNIT PASS: 27 checks
-```
-
-검사에는 Idle/Battle, yes/no, option, chain, card, place, position, tribute, counter, sum, unselect, sort, race/attribute/number, RPS와 malformed/unsupported 거절이 포함된다.
-
-### 2. Duel Runner 컴파일
-
-`tools/phase5_duel.cpp`와 새 response 코드를 `-Wall -Wextra -Werror -pedantic`로 컴파일했다.
-
-### 3. 제공된 고정 OCGCore 소스로 실제 엔진 실행
-
-첨부된 OCGCore commit 소스를 Linux에서 직접 빌드하여 synthetic DB의 서로 다른 일반 몬스터 40장 덱 두 개를 실제 엔진에서 듀얼시켰다. 카드별 효과 script가 필요하지 않는 fixture이므로 common Lua는 최소 유효 stub을 사용했다.
-
-실측 예:
-
-```text
-PHASE5-B DUEL PASS: winner=0 reason=1 turns=15 selections=413
-```
-
-- process calls: 783
-- selections: 413
-- normal summons: 15
-- attacks: 14
-- damage events: 7
-- engine errors: 0
-- `MSG_RETRY`: 없음
-- JSON result + JSONL trace 생성 확인
-
-이는 runner/message-response loop의 실제 OCGCore 실행 검증이다. **실제 ProjectIgnis CardScripts 효과 덱 검증은 아니다.**
-
-## GitHub Actions에서 추가 확인할 범위
-
-`tools/run_phase5b_tests.py`가 이미 Phase 2에서 받은 pinned BabelCDB/CardScripts와 Phase 5-A 실제 결과를 사용한다.
-
-- Phase 5-A 상위 2개 YDK
-- seed 1/42
-- candidate 양쪽 좌석
-- 총 8 real OCGCore duels
-- 모든 duel `finished`
-- winner/reason/turn/selection 확인
-- engine Lua error 0
-- trace 파일 생성
-
-최종 기대 문구:
-
-```text
 PHASE5-B SUITE PASS: 8 real OCGCore duels, 2 prescreened decks x 2 seeds x both seats, traces recorded
 ```
 
-## 아직 검증하지 않은 것
+따라서 Phase 5-C는 위 기능을 삭제/대체하지 않고 회귀 검사로 계속 실행한다.
 
-- 일반적인/경쟁력 있는 상대 덱 Pool
-- 강한 플레이 AI
-- 여러 매치업 기반 실제 Fitness 승률
-- 공식 특정 날짜 OCG/TCG 금제 인증
-- Phase 5-B fixture 승률을 최종 성능으로 해석하는 것
+## Phase 5-C 제출본에서 로컬 확인한 항목
 
-따라서 Phase 5-B 성공 후 다음 작업은 Duel Runner를 반복 평가/GA Fitness에 연결하는 Phase 5-C다.
+### 1. 실제 duel Fitness 단위 검사
+
+가짜 runner를 사용하여 OCGCore와 독립적으로 parser/집계/오류 규칙을 검사했다.
+
+```text
+PHASE5-C UNIT PASS: 34 checks (fake runner; no OCGCore duels)
+```
+
+확인 범위:
+
+- seed parser와 중복/잘못된 seed 거절
+- training/validation/final split 분리
+- 상대 manifest 경로 traversal 거절
+- 전체/선공/후공/상대별 W/D/L과 승률 계산
+- worst-opponent 승률
+- 같은 덱 평가 cache
+- runner result/evaluation artifact 생성
+- runner 실패가 `score_ppm=-1`이 되는지
+- 불완전 평가가 `win_rate_evaluated=false`인지
+
+### 2. Phase 5-A/B 회귀
+
+```text
+PHASE5-A UNIT PASS: 35 checks (no engine duels)
+PHASE5-B UNIT PASS: 27 checks
+```
+
+Phase 5-C를 위해 `run_search(..., operations=...)` 선택 인자를 추가했지만 기본값은 기존 6개 mutation 전체이므로 Phase 5-A 동작은 유지된다.
+
+### 3. Duel Runner 컴파일 검사
+
+수정한 `tools/phase5_duel.cpp`를 다음 조건으로 syntax compile했다.
+
+- C++17
+- `-Wall -Wextra -Werror -pedantic`
+- 제공된 고정 OCGCore headers
+
+추가한 Extra required 검사와 provenance 필드에서 컴파일 경고/오류가 없음을 확인했다.
+
+### 4. Phase 5-C 전체 CLI 합성 통합 검사
+
+합성 SQLite 카드 DB, Phase 3 형식 candidate pool, Phase 4 package manifest, Phase 5-A 형식 search population, 두 상대 manifest, deterministic fake runner를 연결해 실제 CLI를 끝까지 실행했다.
+
+실측:
+
+```text
+PHASE5-C OPTIMIZE PASS: population=3 actual_duels=20 best_win_rate_ppm=500000
+```
+
+확인:
+
+- generation 0 + 1 실제 Fitness evaluator 연결
+- mutation child 생성
+- 2 opponents × 양쪽 seat 반복
+- 동일 덱 cache
+- 최종 `search.json`, YDK, duel evaluation/result/trace/log 생성
+- `score_ppm == actual win_rate_ppm`
+
+이 20회는 **가짜 runner 호출**이므로 실제 엔진 듀얼 수로 주장하지 않는다.
+
+## GitHub Actions에서 새로 확인할 범위
+
+로컬 환경에는 pinned BabelCDB/CardScripts repository를 다시 내려받을 네트워크가 없으므로 다음은 아직 검증하지 않았다.
+
+- 실제 pinned BabelCDB/CardScripts의 Phase 5-A 상위 3개
+- 실제 `phase5_duel` + OCGCore 반복 evaluator
+- test-only training opponent 2개에 대한 real Fitness
+- 실제 mutation child의 지원 prompt 완주 여부
+
+Actions에서 기대하는 최종 문구:
+
+```text
+PHASE5-C SUITE PASS: actual OCGCore win-rate fitness drives 3-deck GA over 2 test-only training opponents x 1 seed x both seats; best schedule complete
+```
+
+낮은 순위 mutation child가 지원되지 않는 prompt 때문에 실패하는 것은 Fitness에서 승리로 계산되지 않는다. 통합 게이트는 최소한 최종 1위가 전체 schedule을 실제로 완료해야 통과한다.
+
+## 아직 최종적으로 검증하지 않은 것
+
+- 경쟁력 있는/현실적인 opponent snapshot의 품질
+- `first-legal-v1`보다 강한 플레이 정책
+- 여러 seed/많은 상대/대규모 population에서의 통계적 안정성
+- training/validation/final을 실제 서로 다른 상대 snapshot으로 사용한 과적합 검증
+- 특정 날짜 공식 OCG/TCG 금제/발매 범위 인증
+
+따라서 Phase 5-C 성공은 **실제 승률을 GA Fitness로 연결했다는 의미**이며, 최종 덱 성능이 충분히 강하다는 의미는 아니다.

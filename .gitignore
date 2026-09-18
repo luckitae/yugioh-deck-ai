@@ -31,3 +31,6 @@ __pycache__/
 /phase5_duel
 /phase5b_unit
 /phase5b_update*.zip
+
+# Phase 5-C: delivery archive
+/phase5c_update*.zip

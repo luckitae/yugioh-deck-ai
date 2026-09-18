@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-core:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -147,6 +147,16 @@ jobs:
           set -o pipefail
           python3 tools/run_phase5b_tests.py 2>&1 | tee artifacts/phase5b_console.log
 
+      - name: Run Phase 5-C duel-fitness unit tests
+        run: |
+          set -o pipefail
+          python3 test/phase5c_unit.py 2>&1 | tee artifacts/phase5c_unit.log
+
+      - name: Run Phase 5-C real win-rate GA tests
+        run: |
+          set -o pipefail
+          python3 tools/run_phase5c_tests.py 2>&1 | tee artifacts/phase5c_console.log
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -201,6 +211,17 @@ jobs:
           path: |
             artifacts/phase5b/
             artifacts/phase5b_*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Phase 5-C results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase5c-test-results
+          path: |
+            artifacts/phase5c/
+            artifacts/phase5c_*.log
           if-no-files-found: warn
           retention-days: 14
 

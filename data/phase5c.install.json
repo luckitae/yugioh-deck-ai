@@ -1,0 +1,19 @@
+{
+  "files": {
+    ".github/workflows/build.yml": "1d261bd978ef13d8706148249cf917e02da0b6d83c8c68a20992b9ae9a73dbd4",
+    ".gitignore": "66778e4661f764032c69a2708669e3427689cbbd7e56bfccffc92c83d848ea45",
+    "README.md": "2b5a858d3bba8700a510f3e8fca2343f913fba43766b8ce8778487665522ca15",
+    "docs/PHASE5.md": "c742de161217ce6784d20290bdd97993cbb4f7727474c969f58d6e3916dda07d",
+    "docs/PHASE5_LOCAL_VALIDATION.md": "4ea392175aa049ae362833ebca7de4bc8f2a47be9c9e4eeb375e20d5a06f7d9d",
+    "src/search/duel_fitness.py": "13686b9f60b381a3ec5125c7b0122c9f75c69617d2d3e7c35350bdd809141e97",
+    "src/search/ga.py": "a7cee8424680891de9d823464860a7a4e606cbed0bfb91b7b7b4551f6d9e9b91",
+    "test/phase5c_unit.py": "4319564dde875f7a719675763a63a744f17825f69c38b507f97e9036e6cf2a45",
+    "tools/check_phase5c_install.py": "52b259e78676b3d3de44fb0ea610cf88edff17838b395d5feaefa02fa120e047",
+    "tools/phase5_duel.cpp": "4395440ff906fd07997223bf30afb227d77c0395562cc508d7f86bff0c55cb54",
+    "tools/phase5c_optimize.py": "cbfae30bd86e99b1a5482bbdc3a1cb0ed995153d135af4f5cb4fd2eee93515e4",
+    "tools/run_phase5c_tests.py": "7002471d862e728263ac07bf186a5a8051d78d206b048c80c3d4cc7e33db0539"
+  },
+  "note": "Delivery integrity. Real win-rate fitness is baseline-policy/opponent-snapshot scoped; CI opponents are test-only.",
+  "phase": "5-C",
+  "schema": 1
+}

@@ -226,8 +226,10 @@ def _rank(individuals: list[dict[str, Any]], evaluator: Evaluator,
 def run_search(initial: list[dict[str, Any]], candidates: dict[int, dict[str, Any]],
                packages: dict[str, Package], rules: RuleProfile,
                required: dict[str, dict[int, int]], evaluator: Evaluator,
-               config: SearchConfig) -> dict[str, Any]:
+               config: SearchConfig, operations: tuple[str, ...] = OPERATIONS) -> dict[str, Any]:
     config.validate()
+    if not operations or len(set(operations)) != len(operations) or any(op not in OPERATIONS for op in operations):
+        raise DeckError("operations must be a unique nonempty subset of OPERATIONS")
     if len(initial) < config.population_size:
         raise DeckError("initial population smaller than search population_size")
     clean: list[dict[str, Any]] = []
@@ -268,7 +270,7 @@ def run_search(initial: list[dict[str, Any]], candidates: dict[int, dict[str, An
             attempts += 1
             tournament = rng.sample(ranked, config.tournament_size)
             parent = min(tournament, key=lambda row: (-row["metrics"]["score_ppm"], row["deck_id"]))
-            operation = rng.choice(OPERATIONS)
+            operation = rng.choice(operations)
             child = mutate_once(parent, operation, candidates, packages, rules, required, rng)
             if child is None:
                 mutation_failures += 1

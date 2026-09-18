@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = ROOT / "data/phase5c.install.json"
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def main() -> int:
+    try:
+        data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        if data.get("schema") != 1 or data.get("phase") != "5-C" or not isinstance(data.get("files"), dict):
+            raise RuntimeError("bad install manifest")
+        if not data["files"]:
+            raise RuntimeError("empty install manifest")
+        for relative, expected in data["files"].items():
+            if not isinstance(relative, str) or not isinstance(expected, str) or len(expected) != 64:
+                raise RuntimeError("bad install manifest entry")
+            path = ROOT / relative
+            if not path.is_file():
+                raise RuntimeError(f"missing: {relative}")
+            if digest(path) != expected:
+                raise RuntimeError(f"hash mismatch: {relative}")
+        print(f"PHASE5-C INSTALL PASS: {len(data['files'])} delivered files match")
+        return 0
+    except (OSError, ValueError, TypeError, RuntimeError) as error:
+        print(f"PHASE5-C INSTALL FAIL: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

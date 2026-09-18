@@ -5,6 +5,7 @@
 #include "protocol/smoke_response.h"
 #include "ocgapi.h"
 #include "ocgapi_constants.h"
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstdio>
@@ -21,7 +22,7 @@ struct Arguments {
     std::filesystem::path db, scripts, deck0, deck1, result, trace;
     uint64_t seed = 1;
     uint64_t max_calls = 200000;
-    yda::RequiredMain required0, required1;
+    std::array<yda::RequiredMain,2> required_main, required_extra;
 };
 struct Result {
     std::string status = "input_error", error;
@@ -50,7 +51,9 @@ void parse(int argc,char** argv,Arguments& a) {
     for(int i=1;i<argc;++i){ std::string k=argv[i]; if(++i>=argc) throw std::runtime_error("Missing value for "+k); std::string v=argv[i];
         if(k=="--db") a.db=v; else if(k=="--scripts") a.scripts=v; else if(k=="--deck0") a.deck0=v; else if(k=="--deck1") a.deck1=v;
         else if(k=="--result") a.result=v; else if(k=="--trace") a.trace=v; else if(k=="--seed") a.seed=number(v); else if(k=="--max-calls") a.max_calls=number(v);
-        else if(k=="--required-main0") required_value(v,a.required0); else if(k=="--required-main1") required_value(v,a.required1); else if(k=="--policy") { if(v!="first-legal-v1") throw std::runtime_error("Only --policy first-legal-v1 is supported"); }
+        else if(k=="--required-main0") required_value(v,a.required_main[0]); else if(k=="--required-main1") required_value(v,a.required_main[1]);
+        else if(k=="--required-extra0") required_value(v,a.required_extra[0]); else if(k=="--required-extra1") required_value(v,a.required_extra[1]);
+        else if(k=="--policy") { if(v!="first-legal-v1") throw std::runtime_error("Only --policy first-legal-v1 is supported"); }
         else throw std::runtime_error("Unknown argument: "+k);
     }
     if(a.db.empty()||a.scripts.empty()||a.deck0.empty()||a.deck1.empty()||a.result.empty()) throw std::runtime_error("Required: --db --scripts --deck0 --deck1 --result");
@@ -68,13 +71,22 @@ private: std::ofstream file_;
 };
 
 void write_result(const Arguments& a,const Result& r){ if(!a.result.parent_path().empty())std::filesystem::create_directories(a.result.parent_path()); std::ofstream f(a.result); if(!f)throw std::runtime_error("Cannot write result");
-    f<<"{\n\"schema\":1,\n\"runner\":\"phase5b-duel-runner-v1\",\n\"engine_api\":\"11.0\",\n\"policy\":\"first-legal-v1\",\n\"seed\":"<<a.seed<<",\n\"status\":"<<js(r.status)<<",\n\"error\":"<<js(r.error)<<",\n\"winner\":"<<(r.winner<0?"null":std::to_string(r.winner))<<",\n\"reason\":"<<(r.reason<0?"null":std::to_string(r.reason))<<",\n";
+    f<<"{\n\"schema\":1,\n\"runner\":\"phase5b-duel-runner-v1\",\n\"engine_api\":\"11.0\",\n\"policy\":\"first-legal-v1\",\n\"seed\":"<<a.seed<<",\n\"first_player\":0,\n\"status\":"<<js(r.status)<<",\n\"error\":"<<js(r.error)<<",\n\"winner\":"<<(r.winner<0?"null":std::to_string(r.winner))<<",\n\"reason\":"<<(r.reason<0?"null":std::to_string(r.reason))<<",\n";
     f<<"\"process_calls\":"<<r.calls<<",\n\"turns\":"<<r.turns<<",\n\"selections\":"<<r.selections<<",\n\"summons\":"<<r.summons<<",\n\"special_summons\":"<<r.special_summons<<",\n\"attacks\":"<<r.attacks<<",\n\"chains\":"<<r.chains<<",\n\"chains_solved\":"<<r.chains_solved<<",\n\"damage_events\":"<<r.damage_events<<",\n\"damage_total\":"<<r.damage_total<<",\n";
-    f<<"\"scripts_loaded\":"<<r.scripts<<",\n\"optional_scripts_missing\":"<<r.optional_scripts<<",\n\"engine_errors\":"<<r.engine_errors<<",\n\"card_reads\":"<<r.card_reads<<",\n\"main\":["<<r.main[0]<<','<<r.main[1]<<"],\n\"extra\":["<<r.extra[0]<<','<<r.extra[1]<<"],\n\"side\":["<<r.side[0]<<','<<r.side[1]<<"],\n\"actions\":"; map_json(f,r.actions); f<<",\n\"prompts\":"; map_json(f,r.prompts); f<<",\n\"trace_file\":"<<(a.trace.empty()?"null":js(a.trace.generic_string()))<<"\n}\n";
+    f<<"\"scripts_loaded\":"<<r.scripts<<",\n\"optional_scripts_missing\":"<<r.optional_scripts<<",\n\"engine_errors\":"<<r.engine_errors<<",\n\"card_reads\":"<<r.card_reads<<",\n\"main\":["<<r.main[0]<<','<<r.main[1]<<"],\n\"extra\":["<<r.extra[0]<<','<<r.extra[1]<<"],\n\"side\":["<<r.side[0]<<','<<r.side[1]<<"],\n\"deck_files\":["<<js(a.deck0.generic_string())<<','<<js(a.deck1.generic_string())<<"],\n\"actions\":"; map_json(f,r.actions); f<<",\n\"prompts\":"; map_json(f,r.prompts); f<<",\n\"trace_file\":"<<(a.trace.empty()?"null":js(a.trace.generic_string()))<<"\n}\n";
+}
+
+void validate_required_extra(const yda::Deck& deck,const yda::CardDatabase& db,const yda::RequiredMain& required){
+    for(const auto& [code,count]:required){
+        if(count==0||count>3||!db.find(code)) throw std::runtime_error("Deck: invalid required Extra card setting");
+        const auto actual=std::count(deck.extra.begin(),deck.extra.end(),code);
+        if(static_cast<unsigned>(actual)<count) throw std::runtime_error("Deck: required Extra card missing: "+std::to_string(code));
+    }
 }
 
 void run(const Arguments& a,Result& r){
-    yda::CardDatabase db(a.db); yda::Deck decks[]={yda::load_ydk(a.deck0),yda::load_ydk(a.deck1)}; yda::validate_deck(decks[0],db,a.required0); yda::validate_deck(decks[1],db,a.required1);
+    yda::CardDatabase db(a.db); yda::Deck decks[]={yda::load_ydk(a.deck0),yda::load_ydk(a.deck1)};
+    for(unsigned p=0;p<2;++p){ yda::validate_deck(decks[p],db,a.required_main[p]); validate_required_extra(decks[p],db,a.required_extra[p]); }
     for(unsigned p=0;p<2;++p){r.main[p]=decks[p].main.size();r.extra[p]=decks[p].extra.size();r.side[p]=decks[p].side.size();}
     int major=0,minor=0; OCG_GetVersion(&major,&minor); if(major!=11||minor!=0)throw std::runtime_error("Expected OCGCore API 11.0");
     yda::CardReaderContext reader{db}; yda::ScriptLoader scripts(a.scripts,db); DuelGuard duel; OCG_DuelOptions opt{}; opt.seed[0]=a.seed;opt.seed[1]=0x9e3779b97f4a7c15ULL;opt.seed[2]=0xd1b54a32d192ed03ULL;opt.seed[3]=0x94d049bb133111ebULL;opt.flags=DUEL_MODE_MR5; opt.team1={8000,5,1};opt.team2={8000,5,1}; opt.cardReader=yda::CardReaderContext::read;opt.payload1=&reader;opt.cardReaderDone=yda::CardReaderContext::release;opt.payload4=&reader;opt.scriptReader=yda::ScriptLoader::read;opt.payload2=&scripts;opt.logHandler=yda::ScriptLoader::log;opt.payload3=&scripts;
