@@ -32,7 +32,8 @@ def apply_minima(deck: dict[str, list[int]], members: tuple[tuple[str, int, int]
     return out
 
 
-def read_pool(payload: Any, rules: RuleProfile, required: dict[str, dict[int, int]]) -> tuple[dict[int, dict], list[dict]]:
+def read_pool(payload: Any, rules: RuleProfile, required: dict[str, dict[int, int]],
+              allowed_codes: set[int] | frozenset[int] | None = None) -> tuple[dict[int, dict], list[dict]]:
     if not isinstance(payload, dict) or type(payload.get("schema")) is not int or payload["schema"] != 1:
         raise DeckError("pool: unsupported schema")
     if payload.get("analysis_profile") != "phase3-text-metadata-v1":
@@ -42,7 +43,12 @@ def read_pool(payload: Any, rules: RuleProfile, required: dict[str, dict[int, in
         raise DeckError("pool: invalid required list")
     for code in req:
         rules.catalog[card_code(code)]
-    if len(req) != len(set(req)) or set(req) != set(required["main"]) | set(required["extra"]):
+    required_codes: set[int] = set()
+    for counts in required.values():
+        if not isinstance(counts, dict):
+            raise DeckError("required: expected count object")
+        required_codes.update(counts)
+    if len(req) != len(set(req)) or set(req) != required_codes:
         raise DeckError("pool required IDs do not match generator required IDs; regenerate the pool")
     candidates = payload.get("candidates")
     if not isinstance(candidates, list) or not 1 <= len(candidates) <= 10000:
@@ -75,6 +81,8 @@ def read_pool(payload: Any, rules: RuleProfile, required: dict[str, dict[int, in
             if not isinstance(rel.get("kind"), str) or not isinstance(rel.get("detail"), str):
                 raise DeckError("pool: invalid relation text")
         reason = rules.exclusion(code)
+        if reason is None and allowed_codes is not None and code not in allowed_codes:
+            reason = "experiment_filter"
         if reason:
             if code in req:
                 raise DeckError(f"required card excluded: {code} ({reason})")
@@ -86,8 +94,13 @@ def read_pool(payload: Any, rules: RuleProfile, required: dict[str, dict[int, in
     return dict(sorted(allowed.items())), sorted(excluded, key=lambda r: r["code"])
 
 
-def build_packages(candidates: dict[int, dict], rules: RuleProfile, supplied: Any = None) -> dict[str, Package]:
+def build_packages(candidates: dict[int, dict], rules: RuleProfile, supplied: Any = None,
+                   allowed_codes: set[int] | frozenset[int] | None = None) -> dict[str, Package]:
     packages: dict[str, Package] = {}
+    if allowed_codes is not None:
+        outside = sorted(set(candidates) - set(allowed_codes))
+        if outside:
+            raise DeckError(f"package candidates outside experiment allowed set: {outside[0]}")
     direct = {"MENTIONS_REQUIRED_NAME", "NAMED_BY_REQUIRED", "SHARED_SETCODE"}
     for code, row in sorted(candidates.items()):
         if row["pool"] != "ENGINE":
@@ -139,6 +152,8 @@ def build_packages(candidates: dict[int, dict], rules: RuleProfile, supplied: An
                 count = integer(member["count"], 1, 3, "package count")
                 if section not in ("main", "extra") or code not in candidates or (section, code) in seen:
                     raise DeckError("package: invalid section, duplicate, or card outside eligible pool")
+                if allowed_codes is not None and code not in allowed_codes:
+                    raise DeckError(f"package: member outside experiment allowed set: {code}")
                 seen.add((section, code))
                 parsed.append((section, code, count))
             members_tuple = tuple(sorted(parsed))
@@ -181,10 +196,13 @@ def package_closure(packages: dict[str, Package], requested: list[str]) -> list[
     return out
 
 
-def check_packages(deck: dict[str, list[int]], packages: dict[str, Package], selected: list[str]) -> None:
+def check_packages(deck: dict[str, list[int]], packages: dict[str, Package], selected: list[str],
+                   allowed_codes: set[int] | frozenset[int] | None = None) -> None:
     if set(package_closure(packages, selected)) != set(selected):
         raise DeckError("selected package is missing a dependency")
     for pid in selected:
         for section, code, count in packages[pid].members:
+            if allowed_codes is not None and code not in allowed_codes:
+                raise DeckError(f"selected package contains card outside experiment allowed set: {pid}, {code}")
             if Counter(deck[section])[code] < count:
                 raise DeckError(f"broken package member: {pid}, {code}")

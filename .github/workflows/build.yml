@@ -102,6 +102,11 @@ jobs:
           set -o pipefail
           python3 tools/run_phase3_tests.py 2>&1 | tee artifacts/phase3_console.log
 
+      - name: Run R1 ExperimentSpec / hard-filter re-entry tests
+        run: |
+          set -o pipefail
+          python3 test/r1_unit.py 2>&1 | tee artifacts/r1_unit.log
+
       - name: Run Phase 4 unit tests
         run: |
           set -o pipefail

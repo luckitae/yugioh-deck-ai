@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -91,6 +92,21 @@ void write_json(std::ostream& out, const yda::CandidatePool& pool,
     }
     out << "  ]\n}\n";
 }
+std::set<uint32_t> read_allowed(const std::filesystem::path& path)
+{
+    std::ifstream input(path);
+    if(!input) throw std::runtime_error("cannot open allowed set: " + path.string());
+    std::set<uint32_t> out; std::string line;
+    while(std::getline(input, line)) {
+        if(line.empty()) continue;
+        const uint32_t code = parse_u32(line, "allowed card");
+        if(!out.insert(code).second) throw std::invalid_argument("duplicate allowed card: " + line);
+    }
+    if(!input.eof()) throw std::runtime_error("failed to read allowed set: " + path.string());
+    if(out.empty()) throw std::invalid_argument("allowed set is empty");
+    return out;
+}
+
 }
 
 int main(int argc, char** argv)
@@ -99,6 +115,7 @@ int main(int argc, char** argv)
         std::filesystem::path db_path;
         std::filesystem::path output_path;
         std::vector<uint32_t> required;
+        std::filesystem::path allowed_path;
         yda::CandidatePoolConfig config;
         for(int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
@@ -112,6 +129,7 @@ int main(int argc, char** argv)
             else if(arg == "--engine-limit") config.engine_limit = parse_size(value(), "engine limit");
             else if(arg == "--generic-limit") config.generic_limit = parse_size(value(), "generic limit");
             else if(arg == "--total-limit") config.total_limit = parse_size(value(), "total limit");
+            else if(arg == "--allowed-set") allowed_path = value();
             else if(arg == "--output") output_path = value();
             else throw std::invalid_argument("unknown argument: " + arg);
         }
@@ -124,7 +142,9 @@ int main(int argc, char** argv)
 
         yda::CardDatabase database(db_path);
         yda::CardGraphBuilder graph;
-        const auto pool = graph.build(database, required, config);
+        std::set<uint32_t> allowed; const std::set<uint32_t>* allowed_ptr = nullptr;
+        if(!allowed_path.empty()) { allowed = read_allowed(allowed_path); allowed_ptr = &allowed; }
+        const auto pool = graph.build(database, required, config, allowed_ptr);
         const auto parent = output_path.parent_path();
         if(!parent.empty())
             std::filesystem::create_directories(parent);

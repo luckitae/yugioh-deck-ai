@@ -13,9 +13,10 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from deck.experiment import PreparedExperiment, load_prepared_experiment
 from deck.generator import VERSION, GenerationConfig, generate_population
 from deck.packages import build_packages, read_pool
-from deck.rules import CardCatalog, DeckError, RuleProfile, json_text, read_json, sha256, ydk_text
+from deck.rules import CardCatalog, DeckError, RuleProfile, SECTIONS, json_text, read_json, sha256, ydk_text
 
 
 def parse_required(values: list[str]) -> dict[int, int]:
@@ -85,11 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--required-main", action="append", default=[])
     parser.add_argument("--required-extra", action="append", default=[])
+    parser.add_argument("--required-side", action="append", default=[])
+    parser.add_argument("--experiment", type=Path, help="prepared R1 experiment directory")
     parser.add_argument("--count", type=int, default=100)
-    parser.add_argument("--sizes", default="40:60")
+    parser.add_argument("--sizes")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--extra-size", type=int)
-    parser.add_argument("--side-size", type=int, default=0)
+    parser.add_argument("--side-size", type=int)
     parser.add_argument("--max-packages", type=int, default=3)
     parser.add_argument("--attempts-per-deck", type=int, default=100)
     parser.add_argument("--packages", type=Path)
@@ -98,31 +101,75 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.output.exists():
             raise DeckError(f"output already exists (will not overwrite): {args.output}")
-        config = GenerationConfig(args.count, parse_sizes(args.sizes), args.seed, args.extra_size,
-                                  args.side_size, args.max_packages, args.attempts_per_deck)
-        config.validate()
-        required = {"main": parse_required(args.required_main), "extra": parse_required(args.required_extra)}
-        if not any(required.values()):
-            raise DeckError("at least one --required-main or --required-extra is required")
-        if set(required["main"]) & set(required["extra"]):
-            raise DeckError("same required ID in Main and Extra")
         catalog = CardCatalog(args.db)
         rules = RuleProfile(read_json(args.rules), catalog)
+        prepared: PreparedExperiment | None = None
+        allowed_codes: frozenset[int] | None = None
+        experiment = None
+        if args.experiment is not None:
+            prepared = load_prepared_experiment(args.experiment, catalog, rules, args.db, args.rules)
+            allowed_codes = prepared.allowed_codes
+            experiment = prepared.spec
+
+        cli_required = {
+            "main": parse_required(args.required_main),
+            "extra": parse_required(args.required_extra),
+            "side": parse_required(args.required_side),
+        }
+        if experiment is None:
+            if cli_required["side"]:
+                raise DeckError("--required-side requires --experiment")
+            required = {"main": cli_required["main"], "extra": cli_required["extra"]}
+            if not any(required.values()):
+                raise DeckError("at least one --required-main or --required-extra is required")
+        else:
+            required = experiment.required_minima()
+            if any(cli_required[section] for section in SECTIONS) and cli_required != required:
+                raise DeckError("CLI required minima do not match prepared ExperimentSpec")
+            if not any(required.values()):
+                raise DeckError("ExperimentSpec must contain at least one positive required minimum")
+
+        seen_required: set[int] = set()
+        for section in required:
+            overlap = seen_required & set(required[section])
+            if overlap:
+                raise DeckError("same required ID appears in multiple sections")
+            seen_required.update(required[section])
+
+        size_text = args.sizes
+        if size_text is None:
+            size_text = (f"{experiment.main_min}:{experiment.main_max}"
+                         if experiment is not None else "40:60")
+        side_size = args.side_size
+        if side_size is None:
+            side_size = experiment.side_min if experiment is not None else 0
+        config = GenerationConfig(args.count, parse_sizes(size_text), args.seed, args.extra_size,
+                                  side_size, args.max_packages, args.attempts_per_deck)
+        config.validate()
+
         payload = read_json(args.pool)
-        candidates, excluded = read_pool(payload, rules, required)
+        candidates, excluded = read_pool(payload, rules, required, allowed_codes)
         supplied = read_json(args.packages) if args.packages else None
-        packages = build_packages(candidates, rules, supplied)
-        result = generate_population(candidates, packages, rules, required, config, args.force_package)
+        packages = build_packages(candidates, rules, supplied, allowed_codes)
+        result = generate_population(candidates, packages, rules, required, config, args.force_package,
+                                     allowed_codes, experiment)
         metadata = {"schema": 1, "generator": VERSION, "python_version": platform.python_version(),
                     "analysis_profile": payload["analysis_profile"], "config": asdict(config),
                     "required": {s: {str(code): n for code, n in counts.items()} for s, counts in required.items()},
+                    "experiment": None if prepared is None else {
+                        "id": prepared.spec.experiment_id,
+                        "allowed_set_sha256": prepared.allowed_sha256,
+                    },
                     "forced_packages": sorted(set(args.force_package)), "rules": rules.payload,
                     "input_sha256": {"database": sha256(args.db), "candidate_pool": sha256(args.pool),
                                      "rules": sha256(args.rules),
-                                     "packages": sha256(args.packages) if args.packages else None},
+                                     "packages": sha256(args.packages) if args.packages else None,
+                                     "experiment_manifest": sha256(args.experiment / "experiment.normalized.json") if args.experiment else None,
+                                     "allowed_set": prepared.allowed_sha256 if prepared else None},
                     "source_sha256": {str(path.relative_to(ROOT)): sha256(path) for path in sorted([
                         ROOT / "src/deck/rules.py", ROOT / "src/deck/packages.py",
-                        ROOT / "src/deck/generator.py", Path(__file__).resolve()])},
+                        ROOT / "src/deck/generator.py", ROOT / "src/deck/experiment.py",
+                        Path(__file__).resolve()])},
                     "eligible_candidates": len(candidates), "excluded_candidates": excluded,
                     "package_count": len(packages)}
         write_population(args.output, result, metadata, packages)

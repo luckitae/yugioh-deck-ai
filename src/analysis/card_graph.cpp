@@ -136,7 +136,8 @@ const char* relation_strength_name(RelationStrength strength) noexcept
 
 CandidatePool CardGraphBuilder::build(const CardDatabase& database,
                                       const std::vector<uint32_t>& required,
-                                      const CandidatePoolConfig& config) const
+                                      const CandidatePoolConfig& config,
+                                      const std::set<uint32_t>* allowed_codes) const
 {
     if(required.empty())
         throw std::invalid_argument("candidate pool requires at least one required card");
@@ -148,13 +149,17 @@ CandidatePool CardGraphBuilder::build(const CardDatabase& database,
     for(const uint32_t code : required) {
         if(code == 0 || !database.find(code))
             throw std::invalid_argument("required card is missing from DB: " + std::to_string(code));
+        if(allowed_codes && !allowed_codes->count(code))
+            throw std::invalid_argument("required card is excluded by allowed candidate set: " + std::to_string(code));
         if(seen_required.insert(code).second)
             unique_required.push_back(code);
     }
 
     std::map<uint32_t, CardAnalysis> analyses;
-    for(const auto& entry : database.records())
+    for(const auto& entry : database.records()) {
+        if(allowed_codes && !allowed_codes->count(entry.first)) continue;
         analyses.emplace(entry.first, analyzer_.analyze(entry.second));
+    }
 
     std::vector<CandidateCard> engine;
     std::vector<CandidateCard> generic;
@@ -177,6 +182,8 @@ CandidatePool CardGraphBuilder::build(const CardDatabase& database,
     for(const auto& entry : database.records()) {
         const uint32_t code = entry.first;
         if(seen_required.count(code))
+            continue;
+        if(allowed_codes && !allowed_codes->count(code))
             continue;
         const CardRecord& card = entry.second;
         const CardAnalysis& analysis = analyses.at(code);

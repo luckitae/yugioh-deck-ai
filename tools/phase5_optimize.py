@@ -15,8 +15,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from deck.experiment import PreparedExperiment, check_allowed_deck, load_prepared_experiment
 from deck.packages import Package, package_closure, read_pool
-from deck.rules import CardCatalog, DeckError, RuleProfile, json_text, read_json, sha256, ydk_text
+from deck.rules import CardCatalog, DeckError, RuleProfile, SECTIONS, json_text, read_json, sha256, ydk_text
 from search.fitness import LowCostWeights, low_cost_evaluate
 from search.ga import SearchConfig, run_search
 
@@ -25,9 +26,10 @@ VERSION = "phase5-lowcost-ga-v1"
 
 def parse_required(payload: dict) -> dict[str, dict[int, int]]:
     required = payload.get("required")
-    if not isinstance(required, dict) or set(required) != {"main", "extra"}:
+    if (not isinstance(required, dict) or
+            set(required) not in ({"main", "extra"}, set(SECTIONS))):
         raise DeckError("population required block missing/invalid")
-    out: dict[str, dict[int, int]] = {"main": {}, "extra": {}}
+    out: dict[str, dict[int, int]] = {section: {} for section in required}
     for section in out:
         counts = required[section]
         if not isinstance(counts, dict):
@@ -42,7 +44,8 @@ def parse_required(payload: dict) -> dict[str, dict[int, int]]:
     return out
 
 
-def load_packages(path: Path, candidates: dict[int, dict], rules: RuleProfile) -> dict[str, Package]:
+def load_packages(path: Path, candidates: dict[int, dict], rules: RuleProfile,
+                  allowed_codes: set[int] | frozenset[int] | None = None) -> dict[str, Package]:
     payload = read_json(path)
     if not isinstance(payload, dict) or payload.get("schema") != 1 or set(payload) != {"schema", "packages"}:
         raise DeckError("packages manifest: unsupported schema")
@@ -66,6 +69,8 @@ def load_packages(path: Path, candidates: dict[int, dict], rules: RuleProfile) -
             section, code, count = member["section"], member["code"], member["count"]
             if section not in ("main", "extra") or type(code) is not int or code not in candidates:
                 raise DeckError("packages manifest: member outside eligible pool")
+            if allowed_codes is not None and code not in allowed_codes:
+                raise DeckError(f"packages manifest: member outside experiment allowed set: {code}")
             if type(count) is not int or not 1 <= count <= 3:
                 raise DeckError("packages manifest: invalid count")
             if rules.catalog[code].section != section:
@@ -96,7 +101,10 @@ def parse_weights(path: Path) -> LowCostWeights:
     return result
 
 
-def write_output(output: Path, result: dict, metadata: dict, rules: RuleProfile) -> None:
+def write_output(output: Path, result: dict, metadata: dict, rules: RuleProfile,
+                 required: dict[str, dict[int, int]],
+                 allowed_codes: set[int] | frozenset[int] | None = None,
+                 experiment=None) -> None:
     if output.exists():
         raise DeckError(f"output already exists (will not overwrite): {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +114,10 @@ def write_output(output: Path, result: dict, metadata: dict, rules: RuleProfile)
         rows = []
         for index, item in enumerate(result["population"]):
             deck = {section: item[section] for section in ("main", "extra", "side")}
+            rules.check(deck, required)
+            check_allowed_deck(deck, allowed_codes, "Phase 5-A final deck")
+            if experiment is not None:
+                experiment.check_deck(deck, rules.catalog, rules)
             relative = f"decks/{index:04d}_{item['deck_id'][:16]}.ydk"
             (staging / relative).write_text(ydk_text(deck).replace("#created by yugioh-deck-ai phase4; NOT a win-rate result", "#created by yugioh-deck-ai phase5-a; NOT a win-rate result", 1), encoding="utf-8", newline="\n")
             rows.append({
@@ -151,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pool", type=Path, required=True, help="Phase 3 candidate pool JSON")
     parser.add_argument("--rules", type=Path, required=True)
     parser.add_argument("--fitness", type=Path, required=True)
+    parser.add_argument("--experiment", type=Path, help="prepared R1 experiment directory")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--population-size", type=int, default=48)
     parser.add_argument("--generations", type=int, default=4)
@@ -173,9 +186,27 @@ def main(argv: list[str] | None = None) -> int:
             raise DeckError("Phase 4 provenance flag mismatch")
         catalog = CardCatalog(args.db)
         rules = RuleProfile(read_json(args.rules), catalog)
+        prepared: PreparedExperiment | None = None
+        allowed_codes: frozenset[int] | None = None
+        experiment = None
+        if args.experiment is not None:
+            prepared = load_prepared_experiment(args.experiment, catalog, rules, args.db, args.rules)
+            allowed_codes = prepared.allowed_codes
+            experiment = prepared.spec
+        source_experiment = population.get("experiment")
+        if prepared is None:
+            if source_experiment is not None:
+                raise DeckError("Phase 4 population is experiment-bound; supply matching --experiment")
+        else:
+            expected_experiment = {"id": prepared.spec.experiment_id,
+                                   "allowed_set_sha256": prepared.allowed_sha256}
+            if source_experiment != expected_experiment:
+                raise DeckError("Phase 4 experiment provenance does not match prepared experiment")
         required = parse_required(population)
-        candidates, excluded = read_pool(read_json(args.pool), rules, required)
-        packages = load_packages(packages_path, candidates, rules)
+        if experiment is not None and required != experiment.required_minima():
+            raise DeckError("Phase 4 required minima do not match ExperimentSpec")
+        candidates, excluded = read_pool(read_json(args.pool), rules, required, allowed_codes)
+        packages = load_packages(packages_path, candidates, rules, allowed_codes)
         hashes = population.get("input_sha256")
         if not isinstance(hashes, dict) or hashes.get("database") != sha256(args.db) or hashes.get("rules") != sha256(args.rules):
             raise DeckError("Phase 4 population provenance does not match DB/rules")
@@ -188,7 +219,8 @@ def main(argv: list[str] | None = None) -> int:
         config = SearchConfig(args.population_size, args.generations, args.elite,
                               args.tournament, args.mutation_attempts, args.seed)
         evaluator = lambda deck: low_cost_evaluate(deck, candidates, required, weights)
-        result = run_search(initial, candidates, packages, rules, required, evaluator, config)
+        result = run_search(initial, candidates, packages, rules, required, evaluator, config,
+                            allowed_codes=allowed_codes, experiment=experiment)
         metadata = {
             "schema": 1,
             "optimizer": VERSION,
@@ -196,16 +228,22 @@ def main(argv: list[str] | None = None) -> int:
             "search_config": asdict(config),
             "weights": asdict(weights),
             "required": {s: {str(code): count for code, count in sorted(required[s].items())} for s in required},
+            "experiment": None if prepared is None else {
+                "id": prepared.spec.experiment_id,
+                "allowed_set_sha256": prepared.allowed_sha256,
+            },
             "input_sha256": {
                 "database": sha256(args.db), "population": sha256(population_path),
                 "candidate_pool": sha256(args.pool), "packages": sha256(packages_path),
                 "rules": sha256(args.rules), "fitness": sha256(args.fitness),
+                "experiment_manifest": sha256(args.experiment / "experiment.normalized.json") if args.experiment else None,
+                "allowed_set": prepared.allowed_sha256 if prepared else None,
             },
             "excluded_candidates": excluded,
             "source_population_size": len(initial),
             "rules": rules.payload,
         }
-        write_output(args.output, result, metadata, rules)
+        write_output(args.output, result, metadata, rules, required, allowed_codes, experiment)
         best = result["population"][0]["metrics"]["score_ppm"]
         print(f"PHASE5-A OPTIMIZE PASS: population={len(result['population'])} generations={config.generations} best_score_ppm={best}")
         print("NO DUELS; NOT A WIN-RATE RESULT")

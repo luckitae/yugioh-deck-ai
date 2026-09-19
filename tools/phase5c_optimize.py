@@ -18,6 +18,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
+from deck.experiment import PreparedExperiment, check_allowed_deck, load_prepared_experiment
 from deck.packages import check_packages, read_pool
 from deck.rules import CardCatalog, DeckError, RuleProfile, SECTIONS, json_text, parse_ydk, read_json, sha256, ydk_text
 from search.duel_fitness import DuelEvaluator, DuelFitnessError, DuelSchedule, load_opponent_pool, parse_seeds
@@ -69,11 +70,17 @@ def validate_opponents(opponents, rules: RuleProfile) -> None:
 
 
 def write_output(staging: Path, result: dict, evaluator: DuelEvaluator, metadata: dict,
-                 rules: RuleProfile, required: dict[str, dict[int, int]]) -> None:
+                 rules: RuleProfile, required: dict[str, dict[int, int]],
+                 allowed_codes: set[int] | frozenset[int] | None = None,
+                 experiment=None) -> None:
     (staging / "decks").mkdir(exist_ok=True)
     rows = []
     for index, item in enumerate(result["population"]):
         deck = {section: item[section] for section in SECTIONS}
+        rules.check(deck, required)
+        check_allowed_deck(deck, allowed_codes, "Phase 5-C final deck")
+        if experiment is not None:
+            experiment.check_deck(deck, rules.catalog, rules)
         relative = f"decks/{index:04d}_{item['deck_id'][:16]}.ydk"
         text = ydk_text(deck).replace(
             "#created by yugioh-deck-ai phase4; NOT a win-rate result",
@@ -130,7 +137,11 @@ def write_output(staging: Path, result: dict, evaluator: DuelEvaluator, metadata
     )
     # 마지막으로 모든 최종 덱 제약을 재검사한다.
     for row in rows:
-        rules.check({section: row[section] for section in SECTIONS}, required)
+        deck = {section: row[section] for section in SECTIONS}
+        rules.check(deck, required)
+        check_allowed_deck(deck, allowed_codes, "Phase 5-C published deck")
+        if experiment is not None:
+            experiment.check_deck(deck, rules.catalog, rules)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -143,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--packages", type=Path, required=True, help="Phase 4 packages.json")
     parser.add_argument("--rules", type=Path, required=True)
     parser.add_argument("--opponents", type=Path, required=True, help="opponent pool manifest JSON")
+    parser.add_argument("--experiment", type=Path, help="prepared R1 experiment directory")
     parser.add_argument("--split", choices=("training", "validation", "final"), default="training")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--population-size", type=int, default=8)
@@ -170,9 +182,27 @@ def main(argv: list[str] | None = None) -> int:
             raise DeckError("unsupported Phase 5-A provenance")
         catalog = CardCatalog(args.db)
         rules = RuleProfile(read_json(args.rules), catalog)
+        prepared: PreparedExperiment | None = None
+        allowed_codes: frozenset[int] | None = None
+        experiment = None
+        if args.experiment is not None:
+            prepared = load_prepared_experiment(args.experiment, catalog, rules, args.db, args.rules)
+            allowed_codes = prepared.allowed_codes
+            experiment = prepared.spec
+        source_experiment = search.get("experiment")
+        if prepared is None:
+            if source_experiment is not None:
+                raise DeckError("Phase 5-A search is experiment-bound; supply matching --experiment")
+        else:
+            expected_experiment = {"id": prepared.spec.experiment_id,
+                                   "allowed_set_sha256": prepared.allowed_sha256}
+            if source_experiment != expected_experiment:
+                raise DeckError("Phase 5-A experiment provenance does not match prepared experiment")
         required = parse_required(search)
-        candidates, excluded = read_pool(read_json(args.pool), rules, required)
-        packages = load_packages(args.packages, candidates, rules)
+        if experiment is not None and required != experiment.required_minima():
+            raise DeckError("Phase 5-A required minima do not match ExperimentSpec")
+        candidates, excluded = read_pool(read_json(args.pool), rules, required, allowed_codes)
+        packages = load_packages(args.packages, candidates, rules, allowed_codes)
         hashes = search.get("input_sha256")
         if not isinstance(hashes, dict):
             raise DeckError("Phase 5-A input hashes missing")
@@ -192,14 +222,19 @@ def main(argv: list[str] | None = None) -> int:
         config.validate()
         initial = safe_source_decks(args.search, search, config.population_size)
         for row in initial:
-            rules.check({section: row[section] for section in SECTIONS}, required)
-            check_packages({section: row[section] for section in SECTIONS}, packages, row["selected_packages"])
+            deck = {section: row[section] for section in SECTIONS}
+            rules.check(deck, required)
+            check_allowed_deck(deck, allowed_codes, "Phase 5-C source deck")
+            if experiment is not None:
+                experiment.check_deck(deck, rules.catalog, rules)
+            check_packages(deck, packages, row["selected_packages"], allowed_codes)
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=".phase5c-", dir=args.output.parent))
         evaluator = DuelEvaluator(args.runner, args.db, args.scripts, opponents, schedule, required,
-                                  staging / "duel_eval")
-        result = run_search(initial, candidates, packages, rules, required, evaluator, config, operations)
+                                  staging / "duel_eval", allowed_codes)
+        result = run_search(initial, candidates, packages, rules, required, evaluator, config, operations,
+                            allowed_codes, experiment)
         metadata = {
             "schema": 1,
             "optimizer": VERSION,
@@ -209,7 +244,11 @@ def main(argv: list[str] | None = None) -> int:
             "duel_schedule": {"seeds": list(seeds), "seats": [0, 1],
                               "max_calls": schedule.max_calls, "timeout_seconds": schedule.timeout_seconds},
             "required": {section: {str(code): count for code, count in sorted(required[section].items())}
-                         for section in ("main", "extra")},
+                         for section in required},
+            "experiment": None if prepared is None else {
+                "id": prepared.spec.experiment_id,
+                "allowed_set_sha256": prepared.allowed_sha256,
+            },
             "opponent_pool": {"id": pool_payload["id"], "kind": pool_payload["kind"],
                               "split": args.split, "opponents": [row.id for row in opponents],
                               "manifest_sha256": sha256(args.opponents),
@@ -219,11 +258,13 @@ def main(argv: list[str] | None = None) -> int:
                 "candidate_pool": sha256(args.pool), "packages": sha256(args.packages),
                 "rules": sha256(args.rules), "opponents": sha256(args.opponents),
                 "runner": sha256(args.runner), "phase2_lock": sha256(ROOT / "data/phase2.lock.json"),
+                "experiment_manifest": sha256(args.experiment / "experiment.normalized.json") if args.experiment else None,
+                "allowed_set": prepared.allowed_sha256 if prepared else None,
             },
             "excluded_candidates": excluded,
             "source_phase5a_decks_considered": len(initial),
         }
-        write_output(staging, result, evaluator, metadata, rules, required)
+        write_output(staging, result, evaluator, metadata, rules, required, allowed_codes, experiment)
         if args.output.exists():
             raise DeckError("output appeared while optimizing; refusing to overwrite")
         staging.rename(args.output)

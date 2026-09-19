@@ -177,7 +177,8 @@ class RuleProfile:
                 if copies[card.key] > self.limit(code):
                     raise DeckError(f"copy limit including aliases and Side: {card.key}")
         if required is not None:
-            keys(required, {"main", "extra"}, {"main", "extra"}, "required")
+            if not isinstance(required, dict) or set(required) not in ({"main", "extra"}, set(SECTIONS)):
+                raise DeckError("required: expected main/extra or main/extra/side count objects")
             for section, counts in required.items():
                 if not isinstance(counts, dict):
                     raise DeckError("required: expected count object")
@@ -185,7 +186,7 @@ class RuleProfile:
                 for code, count in counts.items():
                     card = self.catalog[code]
                     integer(count, 1, 3, "required copies")
-                    if card.section != section or actual[code] < count:
+                    if (section != "side" and card.section != section) or actual[code] < count:
                         raise DeckError(f"required {section} missing/wrong section: {code}={count}")
 
 

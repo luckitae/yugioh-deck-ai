@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "card_analyzer.h"
@@ -48,7 +49,8 @@ class CardGraphBuilder {
 public:
     CandidatePool build(const CardDatabase& database,
                         const std::vector<uint32_t>& required,
-                        const CandidatePoolConfig& config = {}) const;
+                        const CandidatePoolConfig& config = {},
+                        const std::set<uint32_t>* allowed_codes = nullptr) const;
 private:
     CardAnalyzer analyzer_;
 };

@@ -194,8 +194,9 @@ def aggregate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _required_flags(required: dict[str, dict[int, int]], seat: int) -> list[str]:
-    if not isinstance(required, dict) or set(required) != {"main", "extra"}:
-        raise DuelFitnessError("required must contain main/extra")
+    if (not isinstance(required, dict) or not {"main", "extra"} <= set(required) or
+            set(required) - {"main", "extra", "side"}):
+        raise DuelFitnessError("required must contain main/extra and may contain side")
     out: list[str] = []
     for section in ("main", "extra"):
         counts = required[section]
@@ -230,7 +231,8 @@ class DuelEvaluator:
     """
 
     def __init__(self, runner: Path, db: Path, scripts: Path, opponents: list[Opponent],
-                 schedule: DuelSchedule, required: dict[str, dict[int, int]], work_dir: Path):
+                 schedule: DuelSchedule, required: dict[str, dict[int, int]], work_dir: Path,
+                 allowed_codes: set[int] | frozenset[int] | None = None):
         schedule.validate()
         if not runner.is_file() or not db.is_file() or not scripts.is_dir():
             raise DuelFitnessError("runner/DB/scripts prerequisite missing")
@@ -242,6 +244,9 @@ class DuelEvaluator:
         self.opponents = list(opponents)
         self.schedule = schedule
         self.required = required
+        self.allowed_codes = None if allowed_codes is None else frozenset(allowed_codes)
+        if self.allowed_codes is not None and not self.allowed_codes:
+            raise DuelFitnessError("candidate allowed set is empty")
         self.work_dir = work_dir
         self.deck_dir = work_dir / "decks"
         self.case_dir = work_dir / "cases"
@@ -473,6 +478,12 @@ class DuelEvaluator:
         for section in SECTIONS:
             if section not in deck or not isinstance(deck[section], list):
                 raise DuelFitnessError("candidate deck missing section")
+            if self.allowed_codes is not None:
+                for code in deck[section]:
+                    if type(code) is not int or code not in self.allowed_codes:
+                        raise DuelFitnessError(f"candidate deck outside experiment allowed set: {code}")
+        # Validate before fingerprint/cache lookup so an injected/stale cache entry can never
+        # make a forbidden candidate appear evaluated.
         fingerprint = _deck_fingerprint(deck)
         if fingerprint in self.cache:
             return self.cache[fingerprint]

@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass
 import random
 
+from .experiment import ExperimentSpec, check_allowed_deck
 from .packages import Package, apply_minima, check_packages, package_closure
 from .rules import DeckError, RuleProfile, SECTIONS, deck_identity, empty_deck, integer
 
@@ -73,11 +74,21 @@ def _available(deck: dict[str, list[int]], targets: dict[str, int],
 
 def generate_population(candidates: dict[int, dict], packages: dict[str, Package], rules: RuleProfile,
                         required: dict[str, dict[int, int]], config: GenerationConfig,
-                        forced: list[str] | None = None) -> dict:
+                        forced: list[str] | None = None,
+                        allowed_codes: set[int] | frozenset[int] | None = None,
+                        experiment: ExperimentSpec | None = None) -> dict:
     config.validate()
+    if allowed_codes is not None:
+        outside = sorted(set(candidates) - set(allowed_codes))
+        if outside:
+            raise DeckError(f"eligible pool contains card outside experiment allowed set: {outside[0]}")
+        for pid, package in packages.items():
+            for _, code, _ in package.members:
+                if code not in allowed_codes:
+                    raise DeckError(f"package outside experiment allowed set: {pid}, {code}")
     base = empty_deck()
     for section, counts in required.items():
-        if section not in ("main", "extra") or not isinstance(counts, dict):
+        if section not in SECTIONS or not isinstance(counts, dict):
             raise DeckError("invalid required section/counts")
         for code, count in counts.items():
             integer(count, 1, 3, "required copies")
@@ -87,18 +98,34 @@ def generate_population(candidates: dict[int, dict], packages: dict[str, Package
     if not any(required.values()):
         raise DeckError("at least one required card must be specified")
     rules.check(base, required, complete=False)
+    check_allowed_deck(base, allowed_codes, "required base")
+    if experiment is not None:
+        experiment.check_deck(base, rules.catalog, rules, complete=False)
     closure = package_closure(packages, forced or [])
     for pid in closure:
         base = apply_minima(base, packages[pid].members)
     rules.check(base, required, complete=False)
+    check_allowed_deck(base, allowed_codes, "required/package base")
+    if experiment is not None:
+        experiment.check_deck(base, rules.catalog, rules, complete=False)
 
     by_section = {s: sorted(code for code in candidates if rules.catalog[code].section == s)
                   for s in ("main", "extra")}
     by_section["side"] = sorted(candidates)
     extra_target = config.extra_size
     if extra_target is None:
-        extra_target = min(15, len(base["extra"]) + remaining_capacity(base, by_section["extra"], rules))
+        maximum = 15 if experiment is None else experiment.extra_max
+        extra_target = min(maximum, len(base["extra"]) + remaining_capacity(base, by_section["extra"], rules))
+        if experiment is not None and extra_target < experiment.extra_min:
+            raise DeckError("eligible pool has insufficient capacity for experiment Extra minimum")
     targets = {"main": min(config.sizes), "extra": extra_target, "side": config.side_size}
+    if experiment is not None:
+        if any(not experiment.main_min <= size <= experiment.main_max for size in config.sizes):
+            raise DeckError("requested Main size falls outside experiment range")
+        if not experiment.extra_min <= extra_target <= experiment.extra_max:
+            raise DeckError("requested Extra size falls outside experiment range")
+        if not experiment.side_min <= config.side_size <= experiment.side_max:
+            raise DeckError("requested Side size falls outside experiment range")
     if not _fits(base, targets, rules):
         raise DeckError("required/forced packages exceed a requested section size")
     for size in config.sizes:
@@ -168,9 +195,16 @@ def generate_population(candidates: dict[int, dict], packages: dict[str, Package
             for section in SECTIONS:
                 deck[section].sort()
             # 후조건은 별도 판정기를 통해 매 후보마다 다시 검사한다.
-            rules.check(deck, required)
-            selected_ids = sorted(selected)
-            check_packages(deck, packages, selected_ids)
+            try:
+                rules.check(deck, required)
+                check_allowed_deck(deck, allowed_codes, "generated deck")
+                if experiment is not None:
+                    experiment.check_deck(deck, rules.catalog, rules)
+                selected_ids = sorted(selected)
+                check_packages(deck, packages, selected_ids, allowed_codes)
+            except DeckError:
+                failed_attempts += 1
+                continue
             fingerprint = deck_identity(deck, rules.catalog)
             if fingerprint in seen:
                 duplicate_attempts += 1

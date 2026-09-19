@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import random
 from typing import Any, Callable
 
+from deck.experiment import ExperimentSpec, check_allowed_deck
 from deck.packages import Package, apply_minima, check_packages, package_closure
 from deck.rules import DeckError, RuleProfile, SECTIONS, deck_identity
 
@@ -57,8 +58,10 @@ def _selected_roots(packages: dict[str, Package], selected: list[str]) -> list[s
 def _protected_minima(required: dict[str, dict[int, int]], packages: dict[str, Package],
                       selected: list[str]) -> dict[str, Counter[int]]:
     protected = {section: Counter() for section in SECTIONS}
-    for section in ("main", "extra"):
-        for code, count in required[section].items():
+    for section, counts in required.items():
+        if section not in protected:
+            raise DeckError(f"invalid required section: {section}")
+        for code, count in counts.items():
             protected[section][code] = max(protected[section][code], count)
     for pid in selected:
         for section, code, count in packages[pid].members:
@@ -71,10 +74,13 @@ def _used_aliases(deck: dict[str, list[int]], rules: RuleProfile) -> Counter[int
 
 
 def _available(candidates: dict[int, dict[str, Any]], deck: dict[str, list[int]],
-               rules: RuleProfile, section: str, pool: str | None = None) -> list[int]:
+               rules: RuleProfile, section: str, pool: str | None = None,
+               allowed_codes: set[int] | frozenset[int] | None = None) -> list[int]:
     used = _used_aliases(deck, rules)
     result = []
     for code, row in candidates.items():
+        if allowed_codes is not None and code not in allowed_codes:
+            continue
         card = rules.catalog[code]
         if card.section != section or (pool is not None and row["pool"] != pool):
             continue
@@ -89,10 +95,15 @@ def _normalise(deck: dict[str, list[int]]) -> None:
 
 
 def _valid(deck: dict[str, list[int]], selected: list[str], packages: dict[str, Package],
-           rules: RuleProfile, required: dict[str, dict[int, int]]) -> bool:
+           rules: RuleProfile, required: dict[str, dict[int, int]],
+           allowed_codes: set[int] | frozenset[int] | None = None,
+           experiment: ExperimentSpec | None = None) -> bool:
     try:
         rules.check(deck, required)
-        check_packages(deck, packages, selected)
+        check_allowed_deck(deck, allowed_codes, "GA deck")
+        if experiment is not None:
+            experiment.check_deck(deck, rules.catalog, rules)
+        check_packages(deck, packages, selected, allowed_codes)
         return True
     except DeckError:
         return False
@@ -104,8 +115,15 @@ def _remove_one(deck: dict[str, list[int]], section: str, code: int) -> None:
 
 def mutate_once(parent: dict[str, Any], operation: str, candidates: dict[int, dict[str, Any]],
                 packages: dict[str, Package], rules: RuleProfile,
-                required: dict[str, dict[int, int]], rng: random.Random) -> dict[str, Any] | None:
+                required: dict[str, dict[int, int]], rng: random.Random,
+                allowed_codes: set[int] | frozenset[int] | None = None,
+                experiment: ExperimentSpec | None = None) -> dict[str, Any] | None:
     deck = _copy(parent)
+    if allowed_codes is not None:
+        try:
+            check_allowed_deck(deck, allowed_codes, "mutation parent")
+        except DeckError:
+            return None
     selected = sorted(set(parent.get("selected_packages", [])))
     protected = _protected_minima(required, packages, selected)
 
@@ -116,7 +134,7 @@ def mutate_once(parent: dict[str, Any], operation: str, candidates: dict[int, di
         old = rng.choice(sorted(set(removable)))
         proposal = _copy(deck)
         _remove_one(proposal, "main", old)
-        choices = [code for code in _available(candidates, proposal, rules, "main") if code != old]
+        choices = [code for code in _available(candidates, proposal, rules, "main", allowed_codes=allowed_codes) if code != old]
         if not choices:
             return None
         proposal["main"].append(rng.choice(choices))
@@ -157,7 +175,7 @@ def mutate_once(parent: dict[str, Any], operation: str, candidates: dict[int, di
         old, wanted = rng.choice(pairs)
         proposal = _copy(deck)
         _remove_one(proposal, "main", old)
-        choices = _available(candidates, proposal, rules, "main", wanted)
+        choices = _available(candidates, proposal, rules, "main", wanted, allowed_codes)
         if not choices:
             return None
         proposal["main"].append(rng.choice(choices))
@@ -206,7 +224,7 @@ def mutate_once(parent: dict[str, Any], operation: str, candidates: dict[int, di
         raise DeckError(f"unknown mutation operation: {operation}")
 
     _normalise(deck)
-    if not _valid(deck, selected, packages, rules, required):
+    if not _valid(deck, selected, packages, rules, required, allowed_codes, experiment):
         return None
     return {**deck, "selected_packages": selected, "mutation": operation}
 
@@ -226,19 +244,29 @@ def _rank(individuals: list[dict[str, Any]], evaluator: Evaluator,
 def run_search(initial: list[dict[str, Any]], candidates: dict[int, dict[str, Any]],
                packages: dict[str, Package], rules: RuleProfile,
                required: dict[str, dict[int, int]], evaluator: Evaluator,
-               config: SearchConfig, operations: tuple[str, ...] = OPERATIONS) -> dict[str, Any]:
+               config: SearchConfig, operations: tuple[str, ...] = OPERATIONS,
+               allowed_codes: set[int] | frozenset[int] | None = None,
+               experiment: ExperimentSpec | None = None) -> dict[str, Any]:
     config.validate()
     if not operations or len(set(operations)) != len(operations) or any(op not in OPERATIONS for op in operations):
         raise DeckError("operations must be a unique nonempty subset of OPERATIONS")
     if len(initial) < config.population_size:
         raise DeckError("initial population smaller than search population_size")
+    if allowed_codes is not None:
+        outside = sorted(set(candidates) - set(allowed_codes))
+        if outside:
+            raise DeckError(f"GA candidates outside experiment allowed set: {outside[0]}")
+        for pid, package in packages.items():
+            for _, code, _ in package.members:
+                if code not in allowed_codes:
+                    raise DeckError(f"GA package outside experiment allowed set: {pid}, {code}")
     clean: list[dict[str, Any]] = []
     seen: set[str] = set()
     for source in initial:
         deck = {section: list(source[section]) for section in SECTIONS}
         selected = sorted(set(source.get("selected_packages", [])))
         _normalise(deck)
-        if not _valid(deck, selected, packages, rules, required):
+        if not _valid(deck, selected, packages, rules, required, allowed_codes, experiment):
             raise DeckError("invalid initial individual")
         identity = deck_identity(deck, rules.catalog)
         if identity in seen:
@@ -271,7 +299,8 @@ def run_search(initial: list[dict[str, Any]], candidates: dict[int, dict[str, An
             tournament = rng.sample(ranked, config.tournament_size)
             parent = min(tournament, key=lambda row: (-row["metrics"]["score_ppm"], row["deck_id"]))
             operation = rng.choice(operations)
-            child = mutate_once(parent, operation, candidates, packages, rules, required, rng)
+            child = mutate_once(parent, operation, candidates, packages, rules, required, rng,
+                                allowed_codes, experiment)
             if child is None:
                 mutation_failures += 1
                 continue
